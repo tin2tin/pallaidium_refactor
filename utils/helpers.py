@@ -1,0 +1,2228 @@
+import platform
+gfx_device = "cpu"
+os_platform = platform.system()
+import bpy
+from bpy_extras.io_utils import ExportHelper
+import ctypes
+import random
+import site
+import sysconfig
+import json
+import subprocess
+import sys
+import os
+import aud
+import re
+import glob
+import string
+from os.path import dirname, realpath, isdir, join, basename
+import shutil
+from datetime import date
+import pathlib
+import gc
+import time
+from bpy_extras.io_utils import ImportHelper
+from bpy.types import Operator, Panel, AddonPreferences, UIList, PropertyGroup
+from bpy.props import (
+    StringProperty,
+    BoolProperty,
+    EnumProperty,
+    IntProperty,
+    FloatProperty,
+)
+import sys
+import base64
+from io import BytesIO
+import asyncio
+import inspect
+from fractions import Fraction
+import importlib
+import importlib.metadata
+import warnings
+import logging
+import bpy
+import os
+import re
+from datetime import date
+
+ADDON_ID = __package__.rsplit(".", 1)[0]
+
+print("Python: " + sys.version)
+
+site_packages_dir = sysconfig.get_path("purelib")
+print("Pallaidium site-packages:", site_packages_dir)
+
+dir_path = os.path.join(bpy.utils.user_resource("DATAFILES"), "Pallaidium Media")
+
+os.makedirs(dir_path, exist_ok=True)
+
+if site_packages_dir and site_packages_dir not in sys.path:
+    sys.path.insert(0, site_packages_dir)
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="xformers.*")
+
+warnings.filterwarnings(
+    "ignore", category=UserWarning, message="1Torch was not compiled"
+)
+
+warnings.filterwarnings("ignore", category=FutureWarning, module="torch.*")
+
+warnings.filterwarnings("ignore", category=UserWarning, message="FutureWarning: ")
+
+warnings.filterwarnings("ignore", category=UserWarning, message="TypedStorage is deprecated")
+
+warnings.filterwarnings("ignore", category=UserWarning, message="The operator.*is not current")
+
+warnings.filterwarnings("ignore", category=UserWarning, message="Converting a tensor to a Python boolean")
+
+logging.getLogger("xformers").setLevel(logging.ERROR)
+
+logging.getLogger("diffusers.models.modeling_utils").setLevel(logging.CRITICAL)
+
+try:
+    exec("import torch")
+    if torch.cuda.is_available():
+        gfx_device = "cuda"
+    elif torch.backends.mps.is_available():
+        gfx_device = "mps"
+    else:
+        gfx_device = "cpu"
+    # Set environment variables for better MPS performance
+    if os_platform == "Darwin":
+        os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
+        # Disable oneDNN optimizations that can cause issues on Apple Silicon
+        os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+    if gfx_device == 'mps' and not torch.backends.mps.is_available():
+          raise Exception("Device set to MPS, but MPS is not available")
+    elif gfx_device == 'cuda' and not torch.cuda.is_available():
+          raise Exception("Device set to CUDA, but CUDA is not available")
+except:
+    print(
+        ""
+    )
+
+os.environ["TF_ENABLE_ONEDNN_OPTS"] = "0"
+
+os_platform = platform.system()
+
+if os_platform == "Windows":
+    pathlib.PosixPath = pathlib.WindowsPath
+
+DEBUG = False
+
+def debug_print(*args):
+    if DEBUG:
+        print(*args)
+
+def show_system_console(show):
+    if os_platform == "Windows":
+        # https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-showwindow
+        SW_HIDE = 0
+        SW_SHOW = 5
+        ctypes.windll.user32.ShowWindow(
+            ctypes.windll.kernel32.GetConsoleWindow(), SW_SHOW
+        )
+
+def set_system_console_topmost(top):
+    if os_platform == "Windows":
+        # https://docs.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setwindowpos
+
+        HWND_NOTOPMOST = -2
+        HWND_TOPMOST = -1
+        HWND_TOP = 0
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+        SWP_NOZORDER = 0x0004
+        ctypes.windll.user32.SetWindowPos(
+            ctypes.windll.kernel32.GetConsoleWindow(),
+            HWND_TOP if top else HWND_NOTOPMOST,
+            0,
+            0,
+            0,
+            0,
+            SWP_NOMOVE | SWP_NOSIZE | SWP_NOZORDER,
+        )
+
+def format_time(milliseconds):
+    seconds, milliseconds = divmod(milliseconds, 1000)
+    minutes, seconds = divmod(seconds, 60)
+    hours, minutes = divmod(minutes, 60)
+    return f"{int(hours):02d}:{int(minutes):02d}:{int(seconds):02d}:{int(milliseconds):03d}"
+
+def timer():
+    start_time = time.time()
+    return start_time
+
+def print_elapsed_time(start_time):
+    elapsed_time = time.time() - start_time
+    formatted_time = format_time(elapsed_time * 1000)  # Convert to milliseconds
+    print(f"Total time: {formatted_time}\n\n")
+
+def split_and_recombine_text(text, desired_length=200, max_length=300):
+    """Split text it into chunks of a desired length trying to keep sentences intact."""
+    text = re.sub(r"\n\n+", "\n", text)
+    text = re.sub(r"\s+", " ", text)
+    text = re.sub(r"[“[“”]”]", '"', text)
+    rv = []
+    in_quote = False
+    current = ""
+    split_pos = []
+    pos = -1
+    end_pos = len(text) - 1
+
+    def seek(delta):
+        nonlocal pos, in_quote, current
+        is_neg = delta < 0
+        for _ in range(abs(delta)):
+            if is_neg:
+                pos -= 1
+                current = current[:-1]
+            else:
+                pos += 1
+                current += text[pos]
+            if text[pos] == '"':
+                in_quote = not in_quote
+        return text[pos]
+
+    def peek(delta):
+        p = pos + delta
+        return text[p] if p < end_pos and p >= 0 else ""
+
+    def commit():
+        nonlocal rv, current, split_pos
+        rv.append(current)
+        current = ""
+        split_pos = []
+
+    while pos < end_pos:
+        c = seek(1)
+        # do we need to force a split?
+        if len(current) >= max_length:
+            if len(split_pos) > 0 and len(current) > (desired_length / 2):
+                # we have at least one sentence and we are over half the desired length, seek back to the last split
+                d = pos - split_pos[-1]
+                seek(-d)
+            else:
+                # no full sentences, seek back until we are not in the middle of a word and split there
+                while c not in "!?.,\n " and pos > 0 and len(current) > desired_length:
+                    c = seek(-1)
+            commit()
+        # check for sentence boundaries
+        elif not in_quote and (c in "!?\n" or (c == "." and peek(1) in "\n ")):
+            # seek forward if we have consecutive boundary markers but still within the max length
+            while (
+                pos < len(text) - 1 and len(current) < max_length and peek(1) in "!?.,"
+            ):
+                c = seek(1)
+            split_pos.append(pos)
+            if len(current) >= desired_length:
+                commit()
+        # treat end of quote as a boundary if its followed by a space or newline
+        elif in_quote and peek(1) == '"' and peek(2) in "\n ":
+            seek(2)
+            split_pos.append(pos)
+    rv.append(current)
+    # clean up, remove lines with only whitespace or punctuation
+    rv = [s.strip() for s in rv]
+    rv = [s for s in rv if len(s) > 0 and not re.match(r"^[\s\.,;:!?]*$", s)]
+    return rv
+
+def extract_numbers(input_string):
+    numbers = re.findall(r"\d+", input_string)
+    if numbers:
+        return int(numbers[0])
+    else:
+        return None
+
+def load_styles(json_filename):
+    styles_array = []
+    try:
+        with open(json_filename, "r") as json_file:
+            data = json.load(json_file)
+    except FileNotFoundError:
+        print(f"JSON file '{json_filename}' not found.")
+        data = []
+    for item in data:
+        name = item["name"]
+        prompt = item["prompt"]
+        negative_prompt = item["negative_prompt"]
+        styles_array.append(
+            (negative_prompt.lower().replace(" ", "_"), name.title(), prompt)
+        )
+    return styles_array
+
+def style_prompt(prompt):
+    selected_entry_key = bpy.context.scene.generatorai_styles
+    return_array = []
+    if selected_entry_key:
+        styles_array = load_styles(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))) + "/styles.json"
+        )
+        if styles_array:
+            selected_entry = next(
+                (item for item in styles_array if item[0] == selected_entry_key), None
+            )
+            if selected_entry:
+                selected_entry_list = list(selected_entry)
+                return_array.append(selected_entry_list[2].replace("{prompt}", prompt))
+                return_array.append(
+                    bpy.context.scene.generate_movie_negative_prompt
+                    + ", "
+                    + selected_entry_list[0].replace("_", " ")
+                )
+                return return_array
+    return_array.append(prompt)
+    return_array.append(bpy.context.scene.generate_movie_negative_prompt)
+    return return_array
+
+def closest_divisible_8(num):
+    # Determine the remainder when num is divided by 8
+    remainder = num % 8
+    # If the remainder is less than or equal to 16, return num - remainder,
+    # but ensure the result is not less than 192
+    if remainder <= 4:
+        result = num - remainder
+        return max(result, 192)
+    # Otherwise, return num + (32 - remainder)
+    else:
+        return max(num + (8 - remainder), 192)
+
+def closest_divisible_16(num):
+    # Determine the remainder when num is divided by 64
+    remainder = num % 16
+    # If the remainder is less than or equal to 16, return num - remainder,
+    # but ensure the result is not less than 192
+    if remainder <= 8:
+        result = num - remainder
+        return max(result, 192)
+    # Otherwise, return num + (32 - remainder)
+    else:
+        return max(num + (16 - remainder), 192)
+
+def closest_divisible_32(num):
+    # Determine the remainder when num is divided by 64
+    remainder = num % 32
+    # If the remainder is less than or equal to 16, return num - remainder,
+    # but ensure the result is not less than 192
+    if remainder <= 16:
+        result = num - remainder
+        return max(result, 192)
+    # Otherwise, return num + (32 - remainder)
+    else:
+        return max(num + (32 - remainder), 192)
+
+def closest_divisible_128(num):
+    # Determine the remainder when num is divided by 128
+    remainder = num % 128
+    # If the remainder is less than or equal to 64, return num - remainder,
+    # but ensure the result is not less than 256
+    if remainder <= 64:
+        result = num - remainder
+        return max(result, 256)
+    # Otherwise, return num + (32 - remainder)
+    else:
+        return max(num + (64 - remainder), 256)
+
+def find_first_empty_channel(start_frame, end_frame):
+    for ch in range(1, len(bpy.context.scene.sequence_editor.strips_all) + 1):
+        for seq in bpy.context.scene.sequence_editor.strips_all:
+            if (
+                seq.channel == ch
+                and seq.frame_final_start < end_frame
+                and (seq.frame_final_start + seq.frame_final_duration) > start_frame
+            ):
+                break
+        else:
+            return ch
+    return 1
+
+def scale_image_within_dimensions(image, target_width=None, target_height=None):
+    import cv2
+    import numpy as np
+
+    # Get the original image dimensions
+    height, width, layers = image.shape
+
+    # Calculate the aspect ratio
+    aspect_ratio = width / float(height)
+
+    # Calculate the new dimensions based on the target width or height
+    if target_width is not None:
+        new_width = target_width
+        new_height = int(target_width / aspect_ratio)
+    elif target_height is not None:
+        new_height = target_height
+        new_width = int(target_height * aspect_ratio)
+    else:
+        # If neither target width nor height is provided, return the original image
+        return image
+    # Use the resize function to scale the image
+    scaled_image = cv2.resize(image, (new_width, new_height))
+
+    return scaled_image
+
+def clean_filename(filename):
+    filename = filename[:50]
+    valid_chars = "-_,.() %s%s" % (string.ascii_letters, string.digits)
+    clean_filename = "".join(c if c in valid_chars else "_" for c in filename)
+    clean_filename = clean_filename.replace("\n", " ")
+    clean_filename = clean_filename.replace("\r", " ")
+    clean_filename = clean_filename.replace(" ", "_")
+    return clean_filename.strip()
+
+def create_folder(folderpath):
+    try:
+        os.makedirs(folderpath)
+        return True
+    except FileExistsError:
+        pass
+        return False
+
+def solve_path(full_path):
+    preferences = bpy.context.preferences
+    addon_prefs = preferences.addons[ADDON_ID].preferences
+    name, ext = os.path.splitext(full_path)
+    dir_path, filename = os.path.split(name)
+    dir_path = os.path.join(addon_prefs.generator_ai, str(date.today()))
+    create_folder(dir_path)
+    cleaned_filename = clean_filename(filename)
+    new_filename = cleaned_filename + ext
+    i = 1
+    while os.path.exists(os.path.join(dir_path, new_filename)):
+        name, ext = os.path.splitext(new_filename)
+        new_filename = f"{name.rsplit('(', 1)[0]}({i}){ext}"
+        i += 1
+    return os.path.join(dir_path, new_filename)
+
+def limit_string(my_string):
+    if len(my_string) > 77:
+        print(
+            "Warning: String is longer than 77 characters. Excessive string:",
+            my_string[77:],
+        )
+        return my_string[:77]
+    else:
+        return my_string
+
+def delete_strip(input_strip):
+    if input_strip is None:
+        return
+    
+    # Get the sequence editor
+    seq_editor = bpy.context.scene.sequence_editor
+    if seq_editor is None:
+        return
+    
+    # Fail-safe: Delete the strip directly via the data API
+    try:
+        seq_editor.strips.remove(input_strip)
+    except ReferenceError:
+        # The strip was already deleted or is an invalid reference
+        pass
+    except Exception as e:
+        print(f"Failed to remove strip: {e}")
+
+def load_video_as_np_array(video_path):
+    import cv2
+    import numpy as np
+
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        raise IOError("Error opening video file")
+    frames = []
+    while True:
+        ret, frame = cap.read()
+        if not ret:
+            break
+        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+        frames.append(frame)
+    cap.release()
+    return np.array(frames)
+
+def load_first_frame(file_path):
+    import cv2, PIL, os
+    from diffusers.utils import load_image
+
+    extension = os.path.splitext(file_path)[
+        -1
+    ].lower()  # Convert to lowercase for case-insensitive comparison
+    valid_image_extensions = {
+        ".sgi",
+        ".rgb",
+        ".bw",
+        ".cin",
+        ".dpx",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".jp2",
+        ".jp2",
+        ".j2c",
+        ".tga",
+        ".exr",
+        ".hdr",
+        ".tif",
+        ".tiff",
+        ".webp",
+    }
+    valid_video_extensions = {
+        ".avi",
+        ".flc",
+        ".mov",
+        ".movie",
+        ".mp4",
+        ".m4v",
+        ".m2v",
+        ".m2t",
+        ".m2ts",
+        ".mts",
+        ".ts",
+        ".mv",
+        ".avs",
+        ".wmv",
+        ".ogv",
+        ".ogg",
+        ".r3d",
+        ".dv",
+        ".mpeg",
+        ".mpg",
+        ".mpg2",
+        ".vob",
+        ".mkv",
+        ".flv",
+        ".divx",
+        ".xvid",
+        ".mxf",
+        ".webm",
+    }
+    if extension in valid_image_extensions:
+        image = cv2.imread(file_path)
+        image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
+        return PIL.Image.fromarray(image)
+    if extension in valid_video_extensions:
+        # Try to open the file as a video
+        cap = cv2.VideoCapture(file_path)
+        # Check if the file was successfully opened as a video
+        if cap.isOpened():
+            # Read the first frame from the video
+            ret, frame = cap.read()
+            cap.release()  # Release the video capture object
+            if ret:
+                # If the first frame was successfully read, it's a video
+                frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+                return PIL.Image.fromarray(frame)
+    # If neither video nor image worked, return None
+    return None
+
+def process_frames(frame_folder_path, target_width):
+    from PIL import Image
+    import numpy as np
+
+    Image.MAX_IMAGE_PIXELS = None
+
+    processed_frames = []
+    image_files = sorted(
+        [f for f in os.listdir(frame_folder_path) if f.endswith(".png")]
+    )
+    for idx, image_file in enumerate(image_files):
+        image_path = os.path.join(frame_folder_path, image_file)
+        img = Image.open(image_path)
+
+        # Original dimensions
+        frame_width, frame_height = img.size
+
+        # Calculate target dimensions
+        target_height = int((target_width / frame_width) * frame_height)
+        target_width = closest_divisible_8(target_width)
+        target_height = closest_divisible_8(target_height)
+
+        # Validate dimensions
+        if target_width <= 0 or target_height <= 0:
+            print(
+                f"Invalid dimensions for frame {idx + 1}: {target_width}x{target_height}"
+            )
+            continue
+
+        # Resize and convert
+        img = img.resize((target_width, target_height), Image.Resampling.LANCZOS)
+        img = img.convert("RGB")
+
+        # Validate image array
+        img_array = np.array(img)
+        if img_array.size == 0:
+            print(f"Empty array for frame {idx + 1}. Skipping.")
+            continue
+
+        processed_frames.append(img)
+
+    return processed_frames
+
+def process_video(input_video_path, output_video_path):
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    import cv2
+    import shutil
+
+    # Create a temporary folder for storing frames
+    temp_image_folder = solve_path("temp_images")
+    if not os.path.exists(temp_image_folder):
+        os.makedirs(temp_image_folder)
+
+    # Open the video file using OpenCV
+    cap = cv2.VideoCapture(input_video_path)
+    if not cap.isOpened():
+        raise ValueError(f"Cannot open video file: {input_video_path}")
+
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    fps = int(cap.get(cv2.CAP_PROP_FPS))
+
+    # Dynamically get the video width (input size)
+    movie_x = int(cap.get(cv2.CAP_PROP_FRAME_WIDTH))
+
+    # Save each loaded frame as an image in the temp folder
+    for i in range(frame_count):
+        ret, frame = cap.read()
+        if not ret:
+            break
+        # Save the frame as an image in the temp folder
+        temp_image_path = os.path.join(temp_image_folder, f"frame_{i:04d}.png")
+        print("Temp path: " + temp_image_path)
+        cv2.imwrite(temp_image_path, frame)
+
+    cap.release()
+
+    # Process frames using the separate function
+    processed_frames = process_frames(temp_image_folder, movie_x)
+
+    # Clean up: Delete the temporary image folder (optional, commented for debugging)
+    shutil.rmtree(temp_image_folder)
+
+    return processed_frames
+
+def zoomPan(img, zoom=1, angle=0, coord=None):
+    import cv2
+
+    cy, cx = [i / 2 for i in img.shape[:-1]] if coord is None else coord[::-1]
+    rot = cv2.getRotationMatrix2D((cx, cy), angle, zoom)
+    res = cv2.warpAffine(img, rot, img.shape[1::-1], flags=cv2.INTER_LINEAR)
+    return res
+
+def process_image(image_path, frames_nr):
+    from PIL import Image
+
+    Image.MAX_IMAGE_PIXELS = None
+    import cv2, shutil
+
+    scene = bpy.context.sequencer_scene
+    movie_x = scene.generate_movie_x
+    img = cv2.imread(image_path)
+    height, width, layers = img.shape
+
+    # Create a temporary folder for storing frames
+    temp_image_folder = solve_path("/temp_images")
+    if not os.path.exists(temp_image_folder):
+        os.makedirs(temp_image_folder)
+
+    max_zoom = 2.0  # Maximum Zoom level (should be > 1.0)
+    max_rot = 30  # Maximum rotation in degrees, set '0' for no rotation
+
+    # Make the loop for Zooming-in
+    i = 1
+    while i < frames_nr:
+        zLvl = 1.0 + ((i / (1 / (max_zoom - 1)) / frames_nr) * 0.005)
+        angle = 0  # i * max_rot / frames_nr
+        zoomedImg = zoomPan(img, zLvl, angle, coord=None)
+        output_path = os.path.join(temp_image_folder, f"frame_{i:04d}.png")
+        cv2.imwrite(output_path, zoomedImg)
+        i = i + 1
+
+    # Process frames using the separate function
+    processed_frames = process_frames(temp_image_folder, movie_x)
+
+    # Clean up: Delete the temporary image folder
+    shutil.rmtree(temp_image_folder)
+
+    return processed_frames
+
+def low_vram():
+    try:
+        if gfx_device == "mps":
+            return True
+
+        exec("import torch")
+
+        total_vram = 0
+        for i in range(torch.cuda.device_count()):
+            properties = torch.cuda.get_device_properties(i)
+            total_vram += properties.total_memory
+        return (total_vram / (1024**3)) <= 16  # Y/N under 16 GB?
+    except:
+        print("Torch not found!")
+        return True
+
+def clear_cuda_cache():
+    import gc
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_max_memory_allocated()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
+def python_exec():
+    """Returns the path to the Blender internal python executable"""
+    return sys.executable
+
+def find_strip_by_name(scene, name):
+    for sequence in scene.sequence_editor.strips:
+        if sequence.name == name:
+            return sequence
+    return None
+
+def get_strip_path(strip):
+    if strip.type == "IMAGE":
+        strip_dirname = os.path.dirname(strip.directory)
+        image_path = bpy.path.abspath(
+            os.path.join(strip_dirname, strip.elements[0].filename)
+        )
+        return image_path
+    if strip.type == "MOVIE":
+        movie_path = bpy.path.abspath(strip.filepath)
+        return movie_path
+    if strip.type == "SOUND":
+        sound_path = bpy.path.abspath(strip.filepath)
+        return sound_path
+    return None
+
+def clamp_value(value, min_value, max_value):
+    # Ensure value is within the specified range
+    return max(min(value, max_value), min_value)
+
+def find_overlapping_frame(strip, current_frame):
+    # Calculate the end frame of the strip
+    strip_end_frame = strip.frame_final_start + strip.frame_duration
+
+    # Check if the strip's frame range overlaps with the current frame
+    if strip.frame_final_start <= current_frame <= strip_end_frame:
+        # Calculate the overlapped frame by subtracting strip.frame_start from the current frame
+        return current_frame - strip.frame_start
+    else:
+        return None
+
+def ensure_unique_filename(file_name):
+    if os.path.exists(file_name):
+        base_name, extension = os.path.splitext(file_name)
+        index = 1
+        while True:
+            unique_file_name = f"{base_name}_{index}{extension}"
+            if not os.path.exists(unique_file_name):
+                return unique_file_name
+            index += 1
+    else:
+        return file_name
+
+def parse_python_version(version_info):
+    major, minor = version_info[:2]
+    return f"{major}.{minor}"
+
+def python_exec():
+    return sys.executable
+
+def install_requirements_binary_only(requirements_file):
+    """
+    Installs using --only-binary=:all: into Blender's own site-packages.
+    """
+    if os.path.getsize(requirements_file) == 0:
+        return True
+
+    pybin = python_exec()
+    cmd = [
+        pybin, "-m", "pip", "install",
+        "--disable-pip-version-check",
+        "--no-warn-script-location",
+        "--no-user",
+        "--no-deps",
+        "--only-binary=:all:",
+        "--target", site_packages_dir,
+        "-r", requirements_file,
+    ]
+    try:
+        subprocess.check_call(cmd)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing binaries: {e}")
+        return False
+
+def install_requirements_allow_source(requirements_file):
+    """
+    Installs WITHOUT --only-binary into Blender's own site-packages.
+    """
+    if os.path.getsize(requirements_file) == 0:
+        return True
+
+    pybin = python_exec()
+    cmd = [
+        pybin, "-m", "pip", "install",
+        "--disable-pip-version-check",
+        "--no-warn-script-location",
+        "--no-user",
+        "--no-deps",
+        "--target", site_packages_dir,
+        "-r", requirements_file,
+    ]
+    try:
+        subprocess.check_call(cmd)
+        return True
+    except subprocess.CalledProcessError as e:
+        print(f"Error installing source libs: {e}")
+        return False
+
+def write_requirements_file(filename, lines):
+    with open(filename, 'w', encoding='utf-8') as f:
+        f.write('\n'.join(lines))
+
+def get_platform_specs():
+    return platform.system()
+
+class SmartSkipManager:
+    @staticmethod
+    def extract_package_name(line):
+        line = line.strip()
+        if not line or line.startswith("#") or line.startswith("--"): return None
+        if "git+" in line or "http" in line:
+            basename = line.split('/')[-1]
+            clean = basename.replace('.git', '').replace('.whl', '')
+            if "-" in clean: return clean.split('-')[0]
+            return clean
+        name = re.split(r'[=<>!~]', line)[0].strip()
+        if "[" in name: name = name.split("[")[0]
+        return name
+
+    @staticmethod
+    def parse_req_version(line):
+        name = SmartSkipManager.extract_package_name(line)
+        if not name: return None, None
+        if "==" in line:
+            try:
+                parts = line.split("==")
+                return name, parts[1].strip().split(' ')[0]
+            except: return name, None
+        return name, None
+
+    @staticmethod
+    def is_installed(line):
+        name, req_version = SmartSkipManager.parse_req_version(line)
+        if not name: return False
+
+        try:
+            installed_version = importlib.metadata.version(name)
+        except importlib.metadata.PackageNotFoundError:
+            try:
+                alt_name = name.replace("-", "_") if "-" in name else name.replace("_", "-")
+                installed_version = importlib.metadata.version(alt_name)
+            except importlib.metadata.PackageNotFoundError:
+                return False
+
+        if "git+" in line or "http" in line:
+            print(f"  [SKIP] {name} is already installed.")
+            return True
+
+        if req_version:
+            if installed_version == req_version:
+                print(f"  [SKIP] {name} {installed_version} is already installed.")
+                return True
+            else:
+                print(f"  [UPDATE] {name}: Installed {installed_version} != Required {req_version}")
+                return False 
+        
+        print(f"  [SKIP] {name} is already installed.")
+        return True
+
+    @staticmethod
+    def filter_existing(requirements_list):
+        needed = []
+        for line in requirements_list:
+            if not SmartSkipManager.is_installed(line):
+                needed.append(line)
+        return needed
+
+class BlenderInternalManager:
+    @staticmethod
+    def get_protected_modules():
+        return {
+            "pip", "setuptools", "wheel", "ensurepip", "_distutils_hack", "distutils",
+            "numpy", "requests", "cython", "zstandard", 
+            "urllib3", "idna", "certifi", "charset-normalizer", 
+            "openimageio", "pyopencolorio", "materialx", "oslquery", 
+            "mesonbuild", "autopep8", "pycodestyle", 
+            "bpy", "mathutils", "gpu", "bl_math", "bl_ui_utils"
+        }
+
+    @staticmethod
+    def is_protected(package_name):
+        if not package_name: return False
+        clean = package_name.lower().replace("_", "-")
+        return clean in BlenderInternalManager.get_protected_modules()
+
+    @staticmethod
+    def filter_list(requirements_list):
+        safe_list = []
+        for line in requirements_list:
+            name = SmartSkipManager.extract_package_name(line)
+            if not BlenderInternalManager.is_protected(name):
+                safe_list.append(line)
+        return safe_list
+
+class DependencyManager:
+    def __init__(self):
+        self.os_platform = get_platform_specs()
+        self.py_major = sys.version_info[0]
+        self.py_minor = sys.version_info[1]
+
+    def get_phase_1_5_source_libs(self):
+        """
+        Pure Python libs or libs needing source build (no wheels).
+        """
+        return [
+            "antlr4-python3-runtime==4.9.3",
+            "argbind==0.3.9",
+            "chatterbox-tts",
+            "dctorch==0.1.2",
+            "einx==0.3.0",
+            "encodec==0.1.1",
+            "imhist==0.0.4",
+            "julius==0.2.7",
+            #"pathtools==0.1.2",
+            "progressbar==2.5",
+            "pyloudnorm==0.1.1",
+            "pystoi==0.4.1",
+            "pyvers==0.1.0",
+            "randomname==0.2.1",
+            "s3tokenizer==0.2.0",
+            "screenplain==0.11.1",
+            "torch-stoi==0.2.3",
+            "transformers-stream-generator==0.0.5",
+            "wget==3.2",
+            "x-transformers==2.11.23",
+        ]
+
+    def get_phase_2_torch(self):
+        if self.os_platform == "Windows":
+            return [
+                #"--index-url https://download.pytorch.org/whl/cu124", 
+                "--index-url https://download.pytorch.org/whl/cu128", 
+                #"torch==2.6.0+cu124", 
+                "torch==2.9.1+cu128", #torch==2.9.1 torchvision==0.24.1 torchaudio==2.9.1
+                #"torchvision==0.21.0+cu124", 
+                "torchvision==0.24.1+cu128", 
+                #"torchaudio==2.6.0+cu124", 
+                "torchaudio==2.9.1+cu128", 
+                #"xformers"
+            ]
+        else:
+            return ["torch", "torchvision", "torchaudio", "xformers"]
+
+    # for installing branch: git+https://github.com/huggingface/diffusers.git@ltx2-i2v-lora-mixin-fix
+
+    def get_phase_3_git_and_extensions(self):
+        reqs = [
+            "git+https://github.com/huggingface/diffusers.git", 
+            #"git+https://github.com/SWivid/F5-TTS.git",
+            "faster-qwen3-tts",
+            #"git+https://github.com/QwenLM/Qwen3-TTS.git",
+            #"git+https://github.com/huggingface/parler-tts.git",
+            "stable-audio-tools", 
+            "torcheval", 
+            #"torchao==0.12.0", broken! 
+            "spacy",
+            "https://github.com/explosion/spacy-models/releases/download/en_core_web_md-3.8.0/en_core_web_md-3.8.0-py3-none-any.whl",
+            #"https://huggingface.co/lldacing/flash-attention-windows-wheel/resolve/main/flash_attn-2.7.4.post1%2Bcu128torch2.7.0cxx11abiFALSE-cp311-cp311-win_amd64.whl",
+            "https://github.com/kingbri1/flash-attention/releases/download/v2.8.3/flash_attn-2.8.3+cu128torch2.8.0cxx11abiFALSE-cp313-cp313-win_amd64.whl",
+        ]
+        
+        if self.py_major == 3 and self.py_minor >= 8:
+             reqs.append("git+https://github.com/huggingface/image_gen_aux")
+             
+        if self.os_platform == "Windows":
+            reqs.extend([
+                "git+https://github.com/hkchengrex/MMAudio.git", 
+                "git+https://github.com/tin2tin/resemble-enhance-windows.git",
+                #"https://github.com/woct0rdho/triton-windows/releases/download/empty/triton-3.4.0-py3-none-any.whl", 
+                #"triton-windows<3.3",
+            ])
+        else:
+            reqs.extend([
+                "resemble-enhance", 
+                #"flash-attn", 
+                "triton", 
+                "sageattention==1.0.6"
+            ])
+        return reqs
+
+def lcm_updated(self, context):
+    scene = context.scene
+    if scene.use_lcm:
+        scene.movie_num_guidance = 0
+
+def filter_updated(self, context):
+    scene = context.scene
+    if (scene.aurasr or scene.adetailer) and scene.movie_num_batch > 1:
+        scene.movie_num_batch = 1
+        print(
+            "INFO: Aura SR and ADetailer will only allow for 1 batch for memory reasons."
+        )
+
+def input_strips_updated(self, context):
+    preferences = context.preferences
+    addon_prefs = preferences.addons[ADDON_ID].preferences
+    scene = context.scene
+    scene_type = scene.generatorai_typeselect
+    input_strips = scene.input_strips
+    image_model = addon_prefs.image_model_card
+    movie_model = addon_prefs.movie_model_card
+    audio_model = addon_prefs.audio_model_card
+
+    # Text Type Handling
+    if scene_type == "text" and scene.input_strips != "input_strips":
+        if addon_prefs.text_model_card != "ZuluVision/MoviiGen1.1_Prompt_Rewriter":
+            scene.input_strips = "input_strips"
+    # Image Type Handling
+    if scene_type == "image":
+#        if image_model == "Shitao/OmniGen-v1-diffusers": #crash
+#            scene.input_strips = "input_prompt"
+        if scene.input_strips != "input_strips" and image_model in {
+            "diffusers/controlnet-canny-sdxl-1.0-small",
+            "xinsir/controlnet-openpose-sdxl-1.0",
+            "xinsir/controlnet-scribble-sdxl-1.0",
+            "ZhengPeng7/BiRefNet_HR",
+            "fuliucansheng/FLUX.1-Canny-dev-diffusers-lora",
+            "romanfratric234/FLUX.1-Depth-dev-lora",
+            "Runware/FLUX.1-Redux-dev",
+            "kontext-community/relighting-kontext-dev-lora-v3",
+        }:
+            scene.input_strips = "input_strips"
+
+        # Handle specific image models
+        if image_model == "lzyvegetable/FLUX.1-schnell":
+            scene.movie_num_inference_steps = 4
+            scene.movie_num_guidance = 0
+        elif image_model == "ChuckMcSneed/FLUX.1-dev":
+            scene.movie_num_inference_steps = 25
+            scene.movie_num_guidance = 4
+        elif image_model == "Tongyi-MAI/Z-Image-Turbo":
+            scene.movie_num_inference_steps = 8
+            scene.movie_num_guidance = 0
+        elif image_model == "Tongyi-MAI/Z-Image":
+            scene.movie_num_inference_steps = 28
+            scene.movie_num_guidance = 4
+            
+    # Movie Type Handling
+    elif scene_type == "movie":
+        if movie_model == "hunyuanvideo-community/HunyuanVideo":
+            #scene.generate_movie_x = 960
+            #scene.generate_movie_y = 544
+            #scene.generate_movie_frames = 49
+            scene.movie_num_inference_steps = 40
+            scene.movie_num_guidance = 4
+        elif movie_model in {
+            "THUDM/CogVideoX-5b",
+            "THUDM/CogVideoX-2b"
+        }:
+            scene.generate_movie_x = 720
+            scene.generate_movie_y = 480
+            scene.generate_movie_frames = 49
+            scene.movie_num_inference_steps = 50
+            scene.movie_num_guidance = 6
+        elif movie_model == "Skywork/SkyReels-V1-Hunyuan-T2V":
+            #scene.generate_movie_x = 960
+            #scene.generate_movie_y = 544
+            #scene.generate_movie_frames = 49
+            scene.movie_num_inference_steps = 40
+            scene.movie_num_guidance = 1
+#        elif movie_model in {"LTX-2 Multi-Input File","rootonchair/LTX-2-19b-distilled","Lighttricks/LTX-2"}:
+#            scene.generate_movie_x = 512
+#            scene.generate_movie_y = 288
+#            scene.generate_movie_frames = 121            
+        # Handle specific input strips for movie types
+        if (
+            movie_model in {
+                "Hailuo/MiniMax/img2vid",
+                "Hailuo/MiniMax/subject2vid"
+            }
+        ) and scene.input_strips != "input_strips":
+            scene.input_strips = "input_strips"
+
+    # Audio Type Handling
+    elif scene_type == "audio":
+        if audio_model == "tintwotin/Foundation-1-Diffusers":
+            scene.movie_num_inference_steps = 200
+#        elif addon_prefs.audio_model_card == "MMAudio" and scene.input_strips != "input_strips":
+#            scene.input_strips = "input_strips"
+
+    # Common Handling for Selected Strip
+    if scene_type in {"movie", "audio"} or image_model == "xinsir/controlnet-scribble-sdxl-1.0":
+        scene.inpaint_selected_strip = ""
+
+    # LORA Handling
+    if scene.lora_folder:
+        bpy.ops.lora.refresh_files()
+
+    # Clear Paths if Input is Prompt
+    if scene.input_strips == "input_prompt":
+        bpy.types.Scene.movie_path = ""
+        bpy.types.Scene.image_path = ""
+        bpy.types.Scene.sound_path = ""
+
+def output_strips_updated(self, context):
+    prefs = context.preferences
+    addon_prefs = prefs.addons[ADDON_ID].preferences
+    scene = context.scene
+
+    image_model = addon_prefs.image_model_card
+    movie_model = addon_prefs.movie_model_card
+    audio_model = addon_prefs.audio_model_card
+
+    type = scene.generatorai_typeselect
+    #strip_input = scene.input_strips
+
+    # Default values for movie generation settings
+    movie_res_x = scene.generate_movie_x
+    movie_res_y = scene.generate_movie_y
+    movie_frames = scene.generate_movie_frames
+    movie_inference = scene.movie_num_inference_steps
+    movie_guidance = scene.movie_num_guidance
+
+    # Text Type Handling
+    if type == "text" and scene.input_strips != "input_strips":
+        if addon_prefs.text_model_card != "ZuluVision/MoviiGen1.1_Prompt_Rewriter":
+            scene.input_strips = "input_strips"
+
+    # === IMAGE TYPE === #
+    if type == "image":
+        if image_model == "Shitao/OmniGen-v1-diffusers":
+            scene.input_strips = "input_prompt"
+        elif image_model in [
+            "diffusers/controlnet-canny-sdxl-1.0",
+            "xinsir/controlnet-openpose-sdxl-1.0",
+            "xinsir/controlnet-scribble-sdxl-1.0",
+            "ZhengPeng7/BiRefNet_HR",
+            "fuliucansheng/FLUX.1-Canny-dev-diffusers-lora",
+            "romanfratric234/FLUX.1-Depth-dev-lora",
+            "Runware/FLUX.1-Redux-dev",
+            "kontext-community/relighting-kontext-dev-lora-v3",
+        ]:
+            scene.input_strips = "input_strips"
+        elif image_model == "lzyvegetable/FLUX.1-schnell":
+            movie_inference = 4
+            movie_guidance = 0
+        elif image_model == "ChuckMcSneed/FLUX.1-dev":
+            movie_inference = 25
+            movie_guidance = 4
+        elif image_model == "Tongyi-MAI/Z-Image-Turbo":
+            scene.movie_num_inference_steps = 8
+            scene.movie_num_guidance = 0
+        elif image_model == "Tongyi-MAI/Z-Image":
+            scene.movie_num_inference_steps = 28
+            scene.movie_num_guidance = 4
+
+    # === MOVIE TYPE === #
+    elif type == "movie":
+        if movie_model == "hunyuanvideo-community/HunyuanVideo":
+            movie_res_x = 960
+            movie_res_y = 544
+            movie_frames = 49
+            movie_inference = 20
+            movie_guidance = 4
+        elif movie_model == "Skywork/SkyReels-V1-Hunyuan-T2V":
+            movie_res_x = 960
+            movie_res_y = 544
+            movie_frames = 49
+            movie_inference = 40
+            movie_guidance = 1
+        elif movie_model in ["THUDM/CogVideoX-5b", "THUDM/CogVideoX-2b"]:
+            movie_res_x = 720
+            movie_res_y = 480
+            movie_frames = 49
+            movie_inference = 50
+            movie_guidance = 6
+        elif movie_model in {"LTX-2 Multi-Input File","rootonchair/LTX-2-19b-distilled","Lighttricks/LTX-2"}:
+            scene.generate_movie_x = 768
+            scene.generate_movie_y = 576
+            scene.generate_movie_frames = 121
+        elif movie_model in [
+            "Hailuo/MiniMax/img2vid",
+            "Hailuo/MiniMax/subject2vid"
+        ]:
+            scene.input_strips = "input_strips"
+
+    # === AUDIO TYPE === #
+    elif type == "audio":
+        if audio_model == "tintwotin/Foundation-1-Diffusers":
+            movie_inference = 200
+#        if addon_prefs.audio_model_card == "MMAudio":
+#            scene.input_strips = "input_strips"
+
+    # === COMMON SETTINGS === #
+    if type in ["movie", "audio"] or image_model == "xinsir/controlnet-scribble-sdxl-1.0":
+        scene.inpaint_selected_strip = ""
+        if scene.lora_folder:
+            bpy.ops.lora.refresh_files()
+
+    if type == "movie":
+        scene.generate_movie_x = movie_res_x
+        scene.generate_movie_y = movie_res_y
+        scene.generate_movie_frames = movie_frames
+        scene.movie_num_inference_steps = movie_inference
+        scene.movie_num_guidance = movie_guidance
+
+ILLUMINATION_OPTIONS = {
+    # Natural Daylight
+    "natural lighting": "Neutral white color temperature with balanced exposure and soft shadows",
+    "sunshine from window": "Bright directional sunlight with hard shadows and visible light rays",
+    "golden time": "Warm golden hour lighting with enhanced warm colors and soft shadows",
+    "sunrise in the mountains": "Warm backlighting with atmospheric haze and lens flare",
+    "afternoon light filtering through trees": "Dappled sunlight patterns with green color cast from foliage",
+    "early morning rays, forest clearing": "God rays through trees with warm color temperature",
+    "golden sunlight streaming through trees": "Golden god rays with atmospheric particles in light beams",
+
+    # Sunset & Evening
+    "sunset over sea": "Warm sunset light with soft diffused lighting and gentle gradients",
+    "golden hour in a meadow": "Golden backlighting with lens flare and rim lighting",
+    "golden hour on a city skyline": "Golden lighting on buildings with silhouette effects",
+    "evening glow in the desert": "Warm directional lighting with long shadows",
+    "dusky evening on a beach": "Cool backlighting with horizon silhouettes",
+    "mellow evening glow on a lake": "Warm lighting with water reflections",
+    "warm sunset in a rural village": "Golden hour lighting with peaceful warm tones",
+
+    # Night & Moonlight
+    "moonlight through curtains": "Cool blue lighting with curtain shadow patterns",
+    "moonlight in a dark alley": "Cool blue lighting with deep urban shadows",
+    "midnight in the forest": "Very low brightness with minimal ambient lighting",
+    "midnight sky with bright starlight": "Cool blue lighting with star point sources",
+    "fireflies lighting up a summer night": "Small glowing points with warm ambient lighting",
+
+    # Indoor & Cozy
+    "warm atmosphere, at home, bedroom": "Very warm lighting with soft diffused glow",
+    "home atmosphere, cozy bedroom illumination": "Warm table lamp lighting with pools of light",
+    "cozy candlelight": "Warm orange flickering light with dramatic shadows",
+    "candle-lit room, rustic vibe": "Multiple warm candlelight sources with atmospheric shadows",
+    "night, cozy warm light from fireplace": "Warm orange-red firelight with flickering effects",
+    "campfire light": "Warm orange flickering light from below with dancing shadows",
+
+    # Urban & Neon
+    "neon night, city": "Vibrant blue, magenta, and green neon lights with reflections",
+    "blue neon light, urban street": "Blue neon lighting with urban glow effects",
+    "neon, Wong Kar-wai, warm": "Warm amber and red neon with moody selective lighting",
+    "red and blue police lights in rain": "Alternating red and blue strobing with wet reflections",
+    "red glow, emergency lights": "Red emergency lighting with harsh shadows and high contrast",
+
+    # Sci-Fi & Fantasy
+    "sci-fi RGB glowing, cyberpunk": "Electric blue, pink, and green RGB lighting with glowing effects",
+    "rainbow reflections, neon": "Chromatic rainbow patterns with prismatic reflections",
+    "magic lit": "Colored rim lighting in purple and blue with soft ethereal glow",
+    "mystical glow, enchanted forest": "Supernatural green and blue glowing with floating particles",
+    "ethereal glow, magical forest": "Supernatural lighting with blue-green rim lighting",
+    "underwater glow, deep sea": "Blue-green lighting with caustic patterns and particles",
+    "underwater luminescence": "Blue-green bioluminescent glow with caustic light patterns",
+    "aurora borealis glow, arctic landscape": "Green and purple dancing sky lighting",
+    "crystal reflections in a cave": "Sparkle effects with prismatic light dispersion",
+
+    # Weather & Atmosphere
+    "foggy forest at dawn": "Volumetric fog with cool god rays through trees",
+    "foggy morning, muted light": "Soft fog effects with reduced contrast throughout",
+    "soft, diffused foggy glow": "Heavy fog with soft lighting and no harsh shadows",
+    "stormy sky lighting": "Dramatic lighting with high contrast and rim lighting",
+    "lightning flash in storm": "Brief intense white light with stark shadows",
+    "rain-soaked reflections in city lights": "Wet surface reflections with streaking light effects",
+    "gentle snowfall at dusk": "Cool blue lighting with snowflake particle effects",
+    "hazy light of a winter morning": "Neutral lighting with atmospheric haze",
+    "mysterious twilight, heavy mist": "Heavy fog with cool lighting and atmospheric depth",
+
+    # Seasonal & Nature
+    "vibrant autumn lighting in a forest": "Enhanced warm autumn colors with dappled sunlight",
+    "purple and pink hues at twilight": "Warm lighting with soft purple and pink color grading",
+    "desert sunset with mirage-like glow": "Warm orange lighting with heat distortion effects",
+    "sunrise through foggy mountains": "Warm lighting through mist with atmospheric perspective",
+
+    # Professional & Studio
+    "soft studio lighting": "Multiple diffused sources with even illumination and minimal shadows",
+    "harsh, industrial lighting": "Bright fluorescent lighting with hard shadows",
+    "fluorescent office lighting": "Cool white overhead lighting with slight green tint",
+    "harsh spotlight in a dark room": "Single intense directional light with dramatic shadows",
+
+    # Special Effects & Drama
+    "light and shadow": "Maximum contrast with sharp shadow boundaries",
+    "shadow from window": "Window frame shadow patterns with geometric shapes",
+    "apocalyptic, smoky atmosphere": "Orange-red fire tint with smoke effects",
+    "evil, gothic, in a cave": "Low brightness with cool lighting and deep shadows",
+    "flickering light in a haunted house": "Unstable flickering with cool and warm mixed lighting",
+    "golden beams piercing through storm clouds": "Dramatic god rays with high contrast",
+    "dim candlelight in a gothic castle": "Warm orange candlelight with stone texture enhancement",
+
+    # Festival & Celebration
+    "colorful lantern light at festival": "Multiple colored lantern sources with bokeh effects",
+    "golden glow at a fairground": "Warm carnival lighting with colorful bulb effects",
+    "soft glow through stained glass": "Colored light filtering with rainbow surface patterns",
+    "glowing embers from a forge": "Orange-red glowing particles with intense heat effects"
+}
+
+DIRECTION_OPTIONS = {
+    "auto": "",
+    "left side": "Position the light source from the left side of the frame, creating shadows falling to the right.",
+    "right side": "Position the light source from the right side of the frame, creating shadows falling to the left.",
+    "top": "Position the light source from directly above, creating downward shadows.",
+    "top left": "Position the light source from the top left corner, creating diagonal shadows falling down and to the right.",
+    "top right": "Position the light source from the top right corner, creating diagonal shadows falling down and to the left.",
+    "bottom": "Position the light source from below, creating upward shadows and dramatic under-lighting.",
+    "front": "Position the light source from the front, minimizing shadows and creating even illumination.",
+    "back": "Position the light source from behind the subject, creating silhouette effects and rim lighting."
+}
+
+def copy_struct(source, target):
+    """
+    Robustly copies properties from source to target. 
+    Handles cases where source has properties that target does not (e.g. Movie -> Sound).
+    """
+    if not source or not target:
+        return
+
+    # Properties to ignore
+    ignore_props = {"rna_type", "name", "name_full", "original", "is_evaluated"}
+
+    for name, prop in source.bl_rna.properties.items():
+        if name in ignore_props:
+            continue
+
+        # 1. Safely get the source value
+        try:
+            src_value = getattr(source, name)
+        except (AttributeError, TypeError):
+            continue
+
+        # 2. Try to set the property on the target
+        try:
+            setattr(target, name, src_value)
+        except AttributeError:
+            # 3. If setattr failed, it's either:
+            #    A) A read-only nested struct (like strip.transform)
+            #    B) A property that doesn't exist on the target (like use_deinterlace on Sound)
+            
+            # Safely check if the target actually HAS this property
+            # We use default=None to prevent the crash you are seeing
+            tgt_value = getattr(target, name, None)
+
+            # Only recurse if both exist and are valid structs
+            if tgt_value is not None and src_value is not None:
+                if hasattr(src_value, "bl_rna"):
+                    copy_struct(src_value, tgt_value)
+                    
+        except TypeError:
+            # Handles issues like attempting to write to collection properties
+            pass
+
+def get_render_strip(self, context, strip, meta_strip=None):
+    """Render selected strip to hard-disk. Returns the new strip object or None."""
+    
+    # Access the VSE scene properly for 5.1
+    vse_scene = getattr(context, 'sequencer_scene', context.scene)
+    if not vse_scene or not vse_scene.sequence_editor: 
+        return None
+    
+    seq_editor = vse_scene.sequence_editor
+    
+    # 1. PRE-RENDER PREPARATION: Disable Caching/Prefetching to stop crashes
+    # Note: 5.1 uses 'strips' instead of 'sequences'
+    orig_prefetch = seq_editor.use_prefetch
+    orig_cache = seq_editor.use_cache_raw
+    orig_mute_states = {s: s.mute for s in seq_editor.strips}
+    
+    seq_editor.use_prefetch = False
+    seq_editor.use_cache_raw = False
+    
+    # 2. ISOLATE STRIP
+    target = meta_strip if meta_strip else strip
+    render_start = int(target.frame_final_start)
+    render_duration = int(target.frame_final_duration)
+    render_end = render_start + render_duration - 1
+    
+    # Mute others (using strips collection)
+    for s in seq_editor.strips:
+        s.mute = (s != target)
+    
+    orig_f_start = vse_scene.frame_start
+    orig_f_end = vse_scene.frame_end
+    vse_scene.frame_start = render_start
+    vse_scene.frame_end = render_end
+    
+    # 3. RENDER LOGIC
+    addon_prefs = bpy.context.preferences.addons[ADDON_ID].preferences
+    rendered_dir = os.path.join(addon_prefs.generator_ai, str(date.today()), "Rendered_Strips")
+    os.makedirs(rendered_dir, exist_ok=True)
+    
+    safe_name = re.sub(r'[^\w]', '', strip.name)
+    
+    try:
+        if strip.type == "SOUND":
+            output_path = os.path.abspath(os.path.join(rendered_dir, f"{safe_name}_{render_start:06d}.wav"))
+            bpy.ops.sound.mixdown(filepath=output_path, container='WAV', codec='PCM')
+        else:
+            output_path = os.path.abspath(os.path.join(rendered_dir, f"{safe_name}_{render_start:06d}.mp4"))
+            vse_scene.render.filepath = output_path
+            
+            # 5.1 API: Configure video output without setting file_format to FFMPEG
+            # We set the media type to VIDEO, which tells the renderer to use FFMPEG internally
+            if hasattr(vse_scene.render.image_settings, "media_type"):
+                vse_scene.render.image_settings.media_type = 'VIDEO'
+            
+            # Ensure the container is set for video
+            vse_scene.render.ffmpeg.format = 'MPEG4'
+            vse_scene.render.ffmpeg.codec = 'H264'
+            vse_scene.render.ffmpeg.audio_codec = 'AAC'
+            
+            # Force sequencer rendering
+            vse_scene.render.use_sequencer = True
+            
+            # Execute render
+            bpy.ops.render.render(animation=True, write_still=False)
+            
+            # Handle FFMPEG automatic output pathing
+            # Blender often appends frame numbers (e.g., .mp40001)
+            # We look for the actual file generated
+            if not os.path.exists(output_path):
+                pattern = os.path.join(rendered_dir, f"{safe_name}_{render_start:06d}*.mp4")
+                files = glob.glob(pattern)
+                if files:
+                    files.sort(key=os.path.getmtime)
+                    output_path = files[-1]
+            
+    finally:
+        # 4. RESTORE STATE
+        for s, state in orig_mute_states.items():
+            if s: s.mute = state
+        vse_scene.frame_start = orig_f_start
+        vse_scene.frame_end = orig_f_end
+        seq_editor.use_prefetch = orig_prefetch
+        seq_editor.use_cache_raw = orig_cache
+        
+    # 5. IMPORT RESULT
+    if os.path.exists(output_path):
+        channel = max([s.channel for s in seq_editor.strips], default=0) + 1
+        if strip.type == "SOUND":
+            new_strip = seq_editor.strips.new_sound(name="rendered_sound", filepath=output_path, channel=channel, frame_start=render_start)
+        else:
+            new_strip = seq_editor.strips.new_movie(name="rendered_movie", filepath=output_path, channel=channel, frame_start=render_start)
+        
+        seq_editor.active_strip = new_strip
+        return new_strip
+        
+    return None
+
+class LORABROWSER_UL_files(UIList):
+    def draw_item(
+        self, context, layout, data, item, icon, active_data, active_propname, index
+    ):
+        row = layout.row(align=True)
+        row.prop(item, "enabled", text="")
+        split = row.split(factor=0.7)
+        split.label(text=item.name)
+        split.prop(item, "weight_value", text="", emboss=False)
+
+def update_folder_callback(self, context):
+    bpy.ops.lora.refresh_files()
+
+class OBJECT_OT_FluxAddStrip(bpy.types.Operator):
+    bl_idname = "object.flux_add_strip"
+    bl_label = "Add Flux Image Input"
+    bl_description = "Adds another input slot for Flux images"
+
+    def execute(self, context):
+        scene = context.scene
+        if scene.flux_visible_strips < 9:
+            scene.flux_visible_strips += 1
+        else:
+            self.report({'INFO'}, "Maximum 9 Flux image inputs already displayed.")
+        return {'FINISHED'}
+
+class OBJECT_OT_FluxHideStrip(bpy.types.Operator):
+    bl_idname = "object.flux_hide_strip"
+    bl_label = "Hide Flux Image Input"
+    bl_description = "Hides the last Flux image input and clears its value"
+
+    strip_index: bpy.props.IntProperty(default=0) # Property to know which strip's value to clear
+
+    def execute(self, context):
+        scene = context.scene
+
+        if scene.flux_visible_strips > 1:
+            # Clear the value of the strip corresponding to this button
+            strip_to_clear_name = f"flux_strip_{self.strip_index}"
+            if hasattr(scene, strip_to_clear_name):
+                setattr(scene, strip_to_clear_name, "") # Clear its string property
+            scene.flux_visible_strips -= 1
+        else:
+            # If only one is left, don't hide it, just clear its value
+            strip_to_clear_name = f"flux_strip_{self.strip_index}"
+            if hasattr(scene, strip_to_clear_name):
+                setattr(scene, strip_to_clear_name, "") # Clear its string property
+            self.report({'INFO'}, "Minimum one Flux image input must be visible. Value cleared.")
+        return {'FINISHED'}
+
+class NoWatermark:
+    def apply_watermark(self, img):
+        return img
+
+def invoke_video_generation(prompt, api_key, image_url, movie_model_card):
+    import requests
+    import json
+    import base64
+    import os
+
+    debug_print("-----------------Submit video generation task-----------------")
+    url = "https://api.minimaxi.chat/v1/video_generation"
+    # debug_print("Movie model card:", movie_model_card)
+    debug_print("Prompt:", prompt)
+    debug_print("Image URL:", image_url)
+
+    if movie_model_card == "Hailuo/MiniMax/img2vid":
+        with open(image_url, "rb") as image_file:
+            data = base64.b64encode(image_file.read()).decode("utf-8")
+
+        payload = json.dumps(
+            {
+                "model": "I2V-01-Director",
+                #"model": "I2V-01",
+                "prompt": prompt,
+                # "prompt_optimizer": False,
+                "first_frame_image": f"data:image/jpeg;base64,{data}",
+            }
+        )
+
+    elif movie_model_card == "Hailuo/MiniMax/subject2vid":
+        with open(image_url, "rb") as image_file:
+            data = base64.b64encode(image_file.read()).decode("utf-8")
+        # debug_print("Base64 encoded image data:", data)
+
+        payload = json.dumps(
+            {
+                "model": "S2V-01",
+                "prompt": prompt,
+                # "prompt_optimizer": False,
+                "subject_reference": [
+                    {"type": "character", "image": [f"data:image/jpeg;base64,{data}"]}
+                ],
+            }
+        )
+    else:
+        payload = json.dumps(
+            {
+                "model": "T2V-01-Director",
+                "prompt": prompt,
+                # "prompt_optimizer": False,
+            }
+        )
+
+    # debug_print("Payload:", payload)
+
+    headers = {"authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    # debug_print("Headers:", headers)
+
+    response = requests.request("POST", url, headers=headers, data=payload)
+    debug_print("Response text:", response.text)
+
+    task_id = response.json()["task_id"]
+    debug_print("Task ID:", task_id)
+    print("Video generation task submitted successfully, task ID：" + task_id)
+    return task_id
+
+def query_video_generation(task_id, api_key):
+    debug_print("Task ID:", task_id)
+
+    import requests
+
+    url = f"https://api.minimaxi.chat/v1/query/video_generation?task_id={task_id}"
+    debug_print("Query URL:", url)
+
+    headers = {"authorization": f"Bearer {api_key}"}
+    # debug_print("Headers:", headers)
+
+    response = requests.request("GET", url, headers=headers)
+    debug_print("Response text:", response.text)
+
+    status = response.json()["status"]
+    debug_print("Task Status:", status)
+
+    if status == 'Preparing':
+        print("...Preparing...")
+        return "", 'Preparing'
+    elif status == 'Queueing':
+        print("...In the queue...")
+        return "", 'Queueing'
+    elif status == 'Processing':
+        print("...Generating...")
+        return "", 'Processing'
+    elif status == 'Success':
+        return response.json()['file_id'], "Finished"
+    elif status == 'Fail':
+        return "", "Fail"
+    else:
+        return "", "Unknown"
+
+def fetch_video_result(file_id, api_key, output_file_name):
+    debug_print("File ID:", file_id)
+    debug_print("Out file name:", output_file_name)
+    import requests
+
+    debug_print(
+        "---------------Video generated successfully, downloading now---------------"
+    )
+    url = f"https://api.minimaxi.chat/v1/files/retrieve?file_id={file_id}"
+    debug_print("Retrieve URL:", url)
+
+    headers = {
+        "authorization": f"Bearer {api_key}",
+    }
+    # debug_print("Headers:", headers)
+
+    response = requests.request("GET", url, headers=headers)
+    debug_print("Response text:", response.text)
+
+    download_url = response.json()["file"]["download_url"]
+    debug_print("Download URL:", download_url)
+
+    print("Video download link：" + download_url)
+    with open(output_file_name, "wb") as f:
+        video_content = requests.get(download_url).content
+        f.write(video_content)
+    debug_print("Video content written to:", output_file_name)
+    print("The video has been downloaded in：" + output_file_name)  # os.getcwd()+'/'+
+    return output_file_name
+
+def minimax_validate_image(file_path):
+    """
+    Validate an image based on the following criteria:
+    - Format: JPG, JPEG, PNG
+    - Aspect ratio: Greater than 2:5 and less than 5:2
+    - Shorter side > 300 pixels
+    - File size <= 20MB
+
+    Args:
+        file_path (str): Path to the local image file
+
+    Returns:
+        bool: True if the image is valid, False otherwise
+    """
+    MAX_FILE_SIZE_MB = 20
+    MIN_SHORT_SIDE = 300
+    MIN_ASPECT_RATIO = 2 / 5
+    MAX_ASPECT_RATIO = 5 / 2
+    SUPPORTED_FORMATS = {"JPEG", "JPG", "PNG"}
+    from PIL import Image
+
+    try:
+        # Check file size
+        file_size_mb = os.path.getsize(file_path) / (1024 * 1024)
+        if file_size_mb > MAX_FILE_SIZE_MB:
+            print("MiniMax Image Input Failure Reason: File size exceeds 20MB.")
+            return False
+
+        # Load image using PIL
+        image = Image.open(file_path)
+
+        # Check format
+        if image.format not in SUPPORTED_FORMATS:
+            print(f"Failure Reason: Unsupported image format: {image.format}.")
+            return False
+
+        # Check dimensions
+        width, height = image.size
+        shorter_side = min(width, height)
+        aspect_ratio = width / height
+
+        if shorter_side <= MIN_SHORT_SIDE:
+            print("Failure Reason: Shorter side must exceed 300 pixels.")
+            return False
+
+        if not (MIN_ASPECT_RATIO < aspect_ratio < MAX_ASPECT_RATIO):
+            print("Failure Reason: Aspect ratio must be between 2:5 and 5:2.")
+            return False
+
+        # Passed all checks
+        return True
+
+    except Exception as e:
+        print(f"Failure Reason: {str(e)}")
+        return False
+
+def read_file(path):
+    try:
+        with open(path, "r") as file:
+            return file.read()
+    except Exception as e:
+        return str(e)
+
+def progress_bar(duration):
+    total_steps = 60
+    for i in range(total_steps + 1):
+        completed = int((i / total_steps) * 100)
+        bar = f"[{'█' * i}{'.' * (total_steps - i)}] {completed}%"
+        sys.stdout.write(f"\r{bar}")
+        sys.stdout.flush()
+        time.sleep(duration / total_steps)
+
+_pallaidium_movie_model_cache = {
+    "pipe": None,
+    "refiner": None,
+    "last_model_card": None
+}
+
+def resize_and_pad_image(input_image, target_width, target_height, background_color=(0, 0, 0)):
+    """
+    Resizes an image to fit within the target dimensions while preserving aspect ratio,
+    then pads the remaining space.
+
+    Args:
+        input_image (PIL.Image.Image): The image to process.
+        target_width (int): The final width of the image.
+        target_height (int): The final height of the image.
+        background_color (tuple): RGB tuple for the padding color.
+
+    Returns:
+        PIL.Image.Image: The resized and padded image.
+    """
+    from PIL import Image
+    # Calculate the aspect ratios
+    target_aspect = target_width / target_height
+    image_aspect = input_image.width / input_image.height
+
+    # Determine the new size
+    if image_aspect > target_aspect:
+        # Image is wider than target, fit to target width
+        new_width = target_width
+        new_height = int(new_width / image_aspect)
+    else:
+        # Image is taller than target (or same aspect), fit to target height
+        new_height = target_height
+        new_width = int(new_height * image_aspect)
+
+    # Resize the image using a high-quality filter
+    resized_image = input_image.resize((new_width, new_height), Image.Resampling.LANCZOS)
+
+    # Create a new image with the target dimensions and background color
+    padded_image = Image.new("RGB", (target_width, target_height), background_color)
+
+    # Calculate coordinates to paste the resized image in the center
+    paste_x = (target_width - new_width) // 2
+    paste_y = (target_height - new_height) // 2
+
+    # Paste the resized image onto the padded background
+    padded_image.paste(resized_image, (paste_x, paste_y))
+
+    return padded_image
+
+def split_text_for_tts(full_text: str) -> list[str]:
+    """
+    Splits text into manageable and natural-sounding chunks for TTS.
+    Uses spaCy if available, otherwise falls back to a simple splitter.
+    """
+    MAX_CHUNK_LENGTH = 285
+    print("Full text: "+full_text)
+    try:
+        import spacy
+        # Define an alias for the type hint to use later
+        from spacy.tokens.span import Span as SpacySpan
+        SPACY_AVAILABLE = True
+        print("spaCy library found. Advanced text splitting is enabled.")
+    except ImportError:
+        # If spacy is not installed, create placeholder variables
+        spacy = None
+        SpacySpan = None # This is needed so type hints don't break
+        SPACY_AVAILABLE = False
+        print("Warning: spaCy library not found. Using simple text splitting. For more natural TTS, please install it.")
+
+    if not SPACY_AVAILABLE:
+        # Assuming simple_fallback_splitter and SPACY_AVAILABLE flag from previous answer
+        return simple_fallback_splitter(full_text, MAX_CHUNK_LENGTH)
+
+    # --- spaCy-powered logic (only runs if the import succeeded) ---
+    # NOTE: The spaCy model should be loaded only once if possible for performance.
+    # If this function is called many times, consider loading `nlp` outside.
+    nlp = spacy.load("en_core_web_md")
+    doc = nlp(full_text.replace("\n", " ")) # Replace newlines with spaces for better sentence detection
+    chunks = []
+    current_chunk = ""
+
+    # Iterate through all sentences provided by spaCy
+    for sent in doc.sents:
+        sentence_text = sent.text.strip()
+        if not sentence_text:
+            continue
+
+        # If the sentence itself is too long, it must be split into sub-parts
+        if len(sentence_text) > MAX_CHUNK_LENGTH:
+            # First, if there's anything in current_chunk, finalize it and add to the list.
+            if current_chunk:
+                chunks.append(current_chunk)
+                current_chunk = ""
+
+            # Split the oversized sentence into smaller, manageable parts
+            sub_parts = split_long_sentence(sent, MAX_CHUNK_LENGTH)
+
+            # Add all the new sub-parts directly to the chunks list
+            chunks.extend(sub_parts)
+
+            # Continue to the next sentence, as this one has been fully processed
+            continue
+
+        # --- Logic for sentences that are NOT too long ---
+
+        # If adding the new sentence would make the current chunk too long...
+        # (add 1 for the space that will join them)
+        if len(current_chunk) + len(sentence_text) + 1 > MAX_CHUNK_LENGTH:
+            # ...finalize the current chunk...
+            if current_chunk:
+                chunks.append(current_chunk)
+            # ...and start a new chunk with the new sentence.
+            current_chunk = sentence_text
+        else:
+            # Otherwise, append the new sentence to the current chunk.
+            if current_chunk:
+                current_chunk += " " + sentence_text
+            else:
+                current_chunk = sentence_text
+
+    # After the loop, add any remaining text in current_chunk to the list.
+    if current_chunk:
+        chunks.append(current_chunk)
+
+    return [c for c in chunks if c.strip()]
+
+def split_long_sentence(spacy_sentence_span: 'Any', max_len: int) -> list[str]:
+    """
+    Splits a single spaCy sentence Span that is longer than max_len
+    into smaller pieces, aiming for natural breaks.
+    Returns a list of strings.
+    """
+    import spacy
+    parts = []
+    tokens = list(spacy_sentence_span) # Get all tokens from the sentence span
+    current_pos = 0 # Index in the tokens list
+
+    while current_pos < len(tokens):
+        # Determine the text of the remaining part of the sentence
+        remaining_doc = tokens[current_pos].doc
+        span_start_index = tokens[current_pos].i
+        span_end_index = tokens[-1].i + 1 # up to the end of the last token
+        text_to_split = remaining_doc[span_start_index:span_end_index].text
+
+        if len(text_to_split) <= max_len:
+            parts.append(text_to_split)
+            break # All remaining tokens fit
+
+        # Find the best break point *within* the first max_len characters of text_to_split
+        # This requires careful token-level iteration and checking linguistic features
+
+        # Iterate tokens from current_pos up to where cumulative length approaches max_len
+        potential_break_token_idx_in_sentence = -1 # Absolute index in the original sentence doc
+        current_length_chars = 0
+
+        # Iterate tokens starting from current_pos to find a segment <= max_len
+        last_safe_break_token_offset = -1 # Relative to current_pos
+
+        for i_offset, token in enumerate(tokens[current_pos:]):
+            # Consider space before token, unless it's the first in this potential part
+            token_text_to_add = token.text_with_ws if (current_length_chars > 0 or i_offset > 0) else token.text
+
+            if current_length_chars + len(token_text_to_add.lstrip()) > max_len: # lstrip to avoid counting leading space if it's the start
+                break # This token makes it too long
+
+            current_length_chars += len(token_text_to_add.lstrip())
+            last_safe_break_token_offset = i_offset # This token still fits
+
+            # Check for good break points (punctuation, conjunctions)
+            # Prefer breaks *after* punctuation if it's part of the current segment.
+            # Prefer breaks *before* conjunctions.
+            # This is a place for sophisticated logic. For simplicity:
+            if token.is_punct and token.text in [',', ';', ':', '—']:
+                # This could be a good place to note, will be handled by scan_back
+                pass
+            if token.dep_ == 'cc': # Coordinating conjunction
+                # This could be a good place to note
+                pass
+
+        # If nothing fit (e.g., first token itself > max_len, highly unlikely with sane text)
+        if last_safe_break_token_offset == -1:
+             # Fallback: Take up to MAX_LEN characters and find last space (crude)
+            slice_text = text_to_split[:max_len]
+            last_space = slice_text.rfind(' ')
+            if last_space != -1:
+                parts.append(slice_text[:last_space].strip())
+                # This requires updating current_pos based on character count, which is fiddly.
+                # A token-based approach is cleaner.
+                # For now, let's assume the token iteration handles this better.
+                # This fallback needs to be robust or avoided by good token logic.
+                # For this example, we'll rely on token iteration to find a split point.
+                # If the first token itself is too long, this function has a problem.
+                # It's better to ensure 'potential_break_token_idx_in_sentence' gets set properly.
+
+                # Simplified: If the loop above found at least one token that fits.
+                if last_safe_break_token_offset >=0:
+                    actual_break_idx_relative_to_current_pos = last_safe_break_token_offset
+                else: # First token already too long - should not happen if max_len is reasonable
+                    parts.append(tokens[current_pos].text) # Take first token only
+                    current_pos +=1
+                    continue
+
+            else: # No space, hard cut (worst case)
+                parts.append(slice_text.strip())
+                # Update current_pos...
+                current_pos +=1 # very simplified, needs to advance by tokens in slice_text
+                continue
+
+        # Now, scan backward from tokens[current_pos + last_safe_break_token_offset]
+        # to find the *best* break point (e.g., punctuation, conjunction).
+
+        best_split_offset = last_safe_break_token_offset # Default to the furthest fitting token
+
+        for i in range(last_safe_break_token_offset, 0, -1): # Scan back, but not before the first token of this sub-segment
+            token_at_i = tokens[current_pos + i]
+            prev_token_at_i = tokens[current_pos + i -1]
+
+            # Ideal: split AFTER these punctuations
+            if prev_token_at_i.text in [';', ':', '—']:
+                best_split_offset = i -1 # The punctuation (prev_token) will be the last in the segment
+                break
+            # Good: split AFTER a comma
+            if prev_token_at_i.text == ',':
+                best_split_offset = i -1
+                break
+            # Good: split BEFORE a conjunction (token_at_i is the conjunction)
+            if token_at_i.dep_ == 'cc' and token_at_i.pos_ == 'CCONJ':
+                best_split_offset = i -1 # Break before the conjunction (segment ends with prev_token_at_i)
+                break
+
+        # Extract the part based on best_split_offset
+        part_tokens = tokens[current_pos : current_pos + best_split_offset + 1]
+        if part_tokens:
+            part_doc = part_tokens[0].doc
+            span_start = part_tokens[0].i
+            span_end = part_tokens[-1].i + 1
+            parts.append(part_doc[span_start:span_end].text.strip())
+
+        current_pos += best_split_offset + 1
+
+
+    return [p for p in parts if p]
+
+def simple_fallback_splitter(full_text: str, max_len: int) -> list[str]:
+    # ... (implementation of the simple splitter) ...
+    print("Using simple fallback text splitter.")
+    chunks = []
+    while len(full_text) > max_len:
+        break_point = full_text.rfind(' ', 0, max_len)
+        if break_point == -1: break_point = max_len
+        chunks.append(full_text[:break_point].strip())
+        full_text = full_text[break_point:].strip()
+    if full_text: chunks.append(full_text)
+    return chunks
+
+prompt_items=None
+
+_pallaidium_audio_model_cache = {
+    "pipe": None,
+    "vocoder": None,          # For F5-TTS
+    "model": None,            # For MMAudio / Chatterbox
+    "feature_extractor": None,# For MMAudio
+    "last_model_card": None
+}
+
+class IPAdapterFaceProperties(bpy.types.PropertyGroup):
+    files_to_import: bpy.props.CollectionProperty(type=bpy.types.PropertyGroup)
+
+class IPAdapterStyleProperties(bpy.types.PropertyGroup):
+    files_to_import: bpy.props.CollectionProperty(type=bpy.types.PropertyGroup)
+
+def load_images_from_folder(folder_path):
+    from diffusers.utils import load_image
+
+    # List to hold the loaded images
+
+    loaded_images = []
+
+    # Check if the path is a file
+
+    if os.path.isfile(folder_path) and folder_path.lower().endswith(
+        (".png", ".jpg", ".jpeg", ".tga", ".bmp")
+    ):
+        # Load the image
+
+        try:
+            image = load_image(folder_path)
+            loaded_images.append(image)
+            print(f"Loaded image: {folder_path}")
+        except Exception as e:
+            print(f"Failed to load image {folder_path}: {e}")
+        if len(loaded_images) == 1:
+            return loaded_images[0]
+        else:
+            return None
+
+    # Check if the folder exists
+
+    if not os.path.exists(folder_path):
+        print(f"The folder {folder_path} does not exist.")
+        return None
+    print(f"Loaded folder: {folder_path}")
+
+    # Iterate through all files in the folder
+
+    for filename in os.listdir(folder_path):
+        # Build the full file path
+        file_path = os.path.join(folder_path, filename)
+
+        # Check if the current file is an image
+        if os.path.isfile(file_path) and filename.lower().endswith(
+            (".png", ".jpg", ".jpeg", ".tga", ".bmp")
+        ):
+            # Load the image
+            try:
+                image = load_image(file_path)
+                loaded_images.append(image)
+            except Exception as e:
+                print(f"Failed to load folder image {file_path}: {e}")
+    if len(loaded_images) == 1:
+        return loaded_images[0]
+    elif len(loaded_images) > 1:
+        return loaded_images
+    else:
+        return None
+
+def bytes_to_giga_bytes(bytes):
+    return bytes / 1024 / 1024 / 1024
+
+_pallaidium_model_cache = {
+    "pipe": None,
+    "converter": None,
+    "refiner": None,
+    "last_model_card": None
+}
+
+def clean_string(input_string):
+    # Words to be removed
+    words_to_remove = ["araffe", "arafed", "there is", "there are "]
+    for word in words_to_remove:
+        input_string = input_string.replace(word, "")
+    input_string = input_string.strip()
+
+    # Capitalize the first letter
+    input_string = input_string[:1].capitalize() + input_string[1:]
+
+    # Add a full stop at the end
+    input_string += "."
+    return input_string
+
+def remove_duplicate_phrases(input_string: str) -> str:
+    """
+    Removes duplicate comma-separated phrases from a string.
+
+    This function is designed for strings that are lists of phrases,
+    like "phrase one, phrase two, phrase one". It preserves the
+    first occurrence of each unique phrase.
+
+    Args:
+        input_string: The string containing comma-separated phrases.
+
+    Returns:
+        A new string with duplicate phrases removed, properly formatted.
+    """
+    # 1. Split the string into a list of phrases using the comma as a delimiter.
+    #    We then use a list comprehension to strip leading/trailing whitespace
+    #    from each resulting phrase.
+    phrases = [phrase.strip() for phrase in input_string.split(',')]
+
+    # Use a set for fast lookups to track phrases we've already seen.
+    seen_phrases = set()
+
+    # This list will hold the unique phrases in their original order.
+    unique_phrases_in_order = []
+
+    for phrase in phrases:
+        # Ignore any empty phrases that might result from trailing commas, etc.
+        if not phrase:
+            continue
+
+        # If we haven't seen this phrase before...
+        if phrase not in seen_phrases:
+            # ...add it to our list of unique phrases...
+            unique_phrases_in_order.append(phrase)
+            # ...and record that we have now seen it.
+            seen_phrases.add(phrase)
+
+    # 3. Join the unique phrases back together with a comma and a space.
+    return ", ".join(unique_phrases_in_order)
+
+_pallaidium_text_model_cache = {
+    "model": None,
+    "processor": None,
+    "tokenizer": None,
+    "last_model_card": None
+}
+
+def delete_linked_audio(context, movie_strip):
+    if movie_strip.type != 'MOVIE':
+        return
+
+    seq_editor = context.scene.sequence_editor
+    if not seq_editor:
+        return
+
+    movie_path = movie_strip.filepath
+    movie_start = movie_strip.frame_start
+
+    for s in seq_editor.strips_all:
+        if (
+            s.type == 'SOUND' and
+            getattr(s.sound, "filepath", None) == movie_path and
+            s.frame_start == movie_start
+        ):
+            try:
+                delete_strip(s)
+                print(f"Deleted linked audio strip: {s.name}")
+            except Exception as e:
+                print(f"Warning: Could not delete linked audio {s.name}: {e}")
+            break
+
+AI_METADATA_PREFIX = "ai_meta_"
+
+def set_ai_metadata_from_dict(strip: bpy.types.Strip, params_dict: dict):
+    """
+    Sets AI metadata custom properties on a VSE strip from a dictionary.
+
+    Stores parameter names (dict keys) and their string representations (dict values)
+    as custom properties, prefixed with 'ai_meta_'.
+
+    Args:
+        strip: The VSE strip (Image or Movie) to add metadata to.
+        params_dict: The dictionary containing the inference parameters.
+    """
+    if not strip or strip.type not in {'IMAGE', 'MOVIE'}:
+        print(f"Error: Cannot set metadata. Invalid strip: {strip}")
+        return False
+    if not isinstance(params_dict, dict):
+        print(f"Error: Second argument must be a dictionary.")
+        return False
+
+    print(f"Setting AI Metadata on strip: {strip.name} from dictionary")
+    set_count = 0
+
+    # Optional: Clear existing AI metadata first?
+    # existing_keys = [k for k in strip.keys() if k.startswith(AI_METADATA_PREFIX)]
+    # for k in existing_keys:
+    #     del strip[k]
+    # print(f"  Cleared {len(existing_keys)} existing AI metadata properties.")
+
+    for key, value in params_dict.items():
+        prop_key = f"{AI_METADATA_PREFIX}{key}"
+        value_str = "" # Default empty string
+
+        # Convert value to a suitable string representation
+        if value is None:
+            value_str = "None"
+        elif isinstance(value, (str, int, float, bool)):
+            value_str = str(value)
+        elif type(value).__name__ == "Generator" and type(value).__module__ == "torch":
+            try:
+                # Use the documented method to get the initial seed
+                seed = value.initial_seed()
+                #value_str = f"torch.Generator(seed={seed})"
+                value_str = f"Seed: {seed}"
+            except Exception as e:
+                # Fallback if initial_seed() fails for some reason
+                print(f"  Warning: Could not get initial_seed for {key}: {e}")
+                value_str = f"torch.Generator(object)"
+        elif hasattr(value, '__dict__') or hasattr(value, '__slots__') or callable(getattr(value, '__repr__', None)):
+             try:
+                 repr_val = repr(value)
+                 if len(repr_val) > 200: # Limit length for UI sanity
+                      repr_val = repr_val[:200] + "..."
+                 value_str = repr_val
+             except Exception:
+                 value_str = f"Object({type(value).__name__})"
+        else:
+             # Final fallback conversion
+             try:
+                 value_str = str(value)
+             except Exception as e:
+                 print(f"  Warning: Could not convert value for '{key}' to string: {e}. Using type name.")
+                 value_str = f"<{type(value).__name__}>"
+
+        try:
+            strip[prop_key] = value_str # Store the STRING representation
+            # print(f"  Set '{prop_key}' = '{value_str}'") # Can be verbose
+            set_count += 1
+        except Exception as e:
+            print(f"  Error setting property '{prop_key}' with value '{value_str}': {e}")
+
+
+    # Force UI update attempt
+    if hasattr(strip, "frame_final_duration"):
+        try:
+           strip.frame_final_duration = strip.frame_final_duration
+        except AttributeError: pass
+
+    print(f"Finished setting {set_count} metadata properties.")
+    return True
+
+class AI_Metadata_PT_Panel(bpy.types.Panel):
+    """Displays AI Generation Metadata stored as custom properties"""
+    bl_label = "AI Metadata"
+    bl_idname = "SEQUENCER_PT_ai_metadata"
+    bl_space_type = 'SEQUENCE_EDITOR'
+    bl_region_type = 'UI'
+    bl_category = "Metadata"
+
+    @classmethod
+    def poll(cls, context):
+        if context.space_data.view_type in {'SEQUENCER', 'PREVIEW'}:
+            if context.sequencer_scene and context.scene.sequence_editor:
+                active_strip = context.scene.sequence_editor.active_strip
+                if active_strip and active_strip.type in {'IMAGE', 'MOVIE'}:
+                    return True
+        return False
+
+    def draw(self, context):
+        layout = self.layout
+        scene = context.scene
+        seq_editor = scene.sequence_editor
+        strip = seq_editor.active_strip
+
+        if not strip:
+            return
+
+        col = layout.column(align=True)
+        displayed_anything = False
+
+        #ai_prop_keys = sorted([k for k in strip.keys() if k.startswith(AI_METADATA_PREFIX)])
+        ai_prop_keys = strip.keys()
+
+        if not ai_prop_keys:
+            col.label(text="No AI metadata found on this strip.")
+            col.label(text="Use 'set_ai_metadata_from_dict'")
+            col.label(text="to add data.")
+            return
+
+        col.label(text="Name:                "+strip.name)
+
+        for prop_key in ai_prop_keys:
+            param_name = prop_key[len(AI_METADATA_PREFIX):]
+            label_text = param_name.replace('_', ' ').title()
+            # Use prop for easy copy/paste of the string value
+            col.prop(strip, f'["{prop_key}"]', text=label_text)
+            displayed_anything = True
+
+def get_enum_items(options_dict):
+    """Converts a dictionary to the format required by bpy.props.EnumProperty."""
+    return [(key, key.replace("_", " ").title(), desc) for key, desc in options_dict.items()]
+
+if __name__ == "__main__":
+    pass
