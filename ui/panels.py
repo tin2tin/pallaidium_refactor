@@ -70,6 +70,14 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
         type = scene.generatorai_typeselect
         input = scene.input_strips
         layout = self.layout
+
+        # --- Plugin-driven rendering ---
+        from ..models import get_plugin as _reg_get_plugin
+        from ..models.base import UISection
+        _card = {"movie": movie_model_card, "image": image_model_card,
+                 "audio": audio_model_card, "text": text_model_card}.get(type, "")
+        plugin = _reg_get_plugin(_card)
+        def _has(sec): return plugin is None or sec in (plugin.UI_SECTIONS or [])
         col = layout.column(align=False)
         col.use_property_split = True
         col.use_property_decorate = False
@@ -275,26 +283,15 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
                 )
                 row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "kontext_select1"
 
-            if (
-                image_model_card == "xinsir/controlnet-openpose-sdxl-1.0"
-                and type == "image"
-            ):
+            if _has(UISection.POSE_TOGGLE):
                 col = col.column(heading="Read as", align=True)
                 col.prop(context.scene, "openpose_use_bones", text="OpenPose Rig Image")
-            if (
-                image_model_card == "xinsir/controlnet-scribble-sdxl-1.0"
-                and type == "image"
-            ):
+            if _has(UISection.SCRIBBLE_TOGGLE):
                 col = col.column(heading="Read as", align=True)
                 col.prop(context.scene, "use_scribble_image", text="Scribble Image")
 
             # IPAdapter.
-            if (
-                image_model_card == "stabilityai/stable-diffusion-xl-base-1.0"
-                # or image_model_card == "xinsir/controlnet-openpose-sdxl-1.0"
-                # or image_model_card == "diffusers/controlnet-canny-sdxl-1.0-small"
-                # or image_model_card == "xinsir/controlnet-scribble-sdxl-1.0"
-            ) and type == "image":
+            if _has(UISection.IP_ADAPTER) and type == "image":
                 row = col.row(align=True)
                 row.prop(scene, "ip_adapter_face_folder", text="Adapter Face")
                 row.operator(
@@ -308,86 +305,17 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
                 )
 
             # Prompts
-            if not (type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"):
+            if plugin is None or plugin.UI_SECTIONS:
                 col = layout.column(align=True)
                 col = col.box()
                 col = col.column(align=True)
                 col.use_property_split = True
                 col.use_property_decorate = False
-            if (
-                (type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR")
-                or (
-                    image_model_card == "Shitao/OmniGen-v1-diffusers"
-                    and type == "image"
-                )
-                or (type == "image" and image_model_card == "Runware/FLUX.1-Redux-dev")
-            ):
-                pass
-            else:
+            if _has(UISection.PROMPT):
                 col.use_property_split = False
                 col.use_property_decorate = False
                 col.prop(context.scene, "generate_movie_prompt", text="", icon="ADD")
-                if (
-                    (
-                        type == "audio"
-                        and audio_model_card == "tintwotin/Foundation-1-Diffusers"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "lzyvegetable/FLUX.1-schnell"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "ChuckMcSneed/FLUX.1-dev"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "Runware/BFL-FLUX.2-klein-base-4B"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "black-forest-labs/FLUX.2-klein-9b-kv"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "yuvraj108c/FLUX.1-Kontext-dev"
-                    )
-                    or (type == "image" and image_model_card == "kontext-community/relighting-kontext-dev-lora-v3")
-                    or (
-                        type == "image"
-                        and image_model_card
-                        == "fuliucansheng/FLUX.1-Canny-dev-diffusers-lora"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card
-                        == "romanfratric234/FLUX.1-Depth-dev-lora"
-                    )
-                    or (
-                        type == "image"
-                        and image_model_card == "Runware/FLUX.1-Redux-dev"
-                    )
-                    or (
-                        type == "audio"
-                        and (audio_model_card == "WhisperSpeech" or audio_model_card == "SWivid/F5-TTS" or audio_model_card == "Chatterbox" or audio_model_card == "ChatterboxTurbo" or audio_model_card == "Qwen/Qwen3-TTS-12Hz-1.7B-Base")
-                    )
-                    or (type == "movie" and "Hailuo/MiniMax/" in movie_model_card)
-                ):
-                    pass
-                elif type == "audio" and (
-                    audio_model_card == "parler-tts/parler-tts-large-v1"
-                    or audio_model_card == "parler-tts/parler-tts-mini-v1"
-                ):
-                    layout = col.column()
-                    col = layout.column(align=True)
-                    col.use_property_split = True
-                    col.use_property_decorate = False
-                    col.prop(
-                        context.scene,
-                        "parler_direction_prompt",
-                        text="Instruction",
-                    )
-                else:
+                if _has(UISection.NEG_PROMPT):
                     col.prop(
                         context.scene,
                         "generate_movie_negative_prompt",
@@ -398,269 +326,81 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
                 col = layout.column(align=True)
                 col.use_property_split = True
                 col.use_property_decorate = False
-                if type != "audio" and not (
-                    type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                ):
+                if type != "audio":
                     col.prop(context.scene, "generatorai_styles", text="Style")
-            if type == "movie" and "Hailuo/MiniMax/" in movie_model_card:
-                pass
-            else:
-                layout = col.column()
-                if (
-                    type == "movie"
-                    or type == "image"
-                    and not (
-                        type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                    )
-                ):
-                    col = layout.column(align=True)
-                    col.prop(context.scene, "generate_movie_x", text="X")
-                    col.prop(context.scene, "generate_movie_y", text="Y")
+            layout = col.column()
+            if _has(UISection.RESOLUTION):
                 col = layout.column(align=True)
-                if (
-                    type == "movie"
-                    or type == "image"
-                    and not (
-                        type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                    )
-                ):
-                    col.prop(context.scene, "generate_movie_frames", text="Frames")
-                if (
-                    type == "audio"
-                    and audio_model_card != "WhisperSpeech"
-                    and audio_model_card != "SWivid/F5-TTS"
-                    and audio_model_card != "Chatterbox"
-                    and audio_model_card != "ChatterboxTurbo"
-                    and audio_model_card != "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-                    and audio_model_card != "parler-tts/parler-tts-large-v1"
-                    and audio_model_card != "parler-tts/parler-tts-mini-v1"
-                ):
-                    col.prop(context.scene, "audio_length_in_f", text="Frames")
-                if type == "audio" and (audio_model_card == "WhisperSpeech" or audio_model_card == "SWivid/F5-TTS" or audio_model_card == "Chatterbox" or audio_model_card == "ChatterboxTurbo" or audio_model_card == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"):
-                    row = col.row(align=True)
-                    row.prop(context.scene, "audio_path", text="Speaker Ref.")
-                    row.operator(
-                        "sequencer.open_audio_filebrowser", text="", icon="FILEBROWSER"
-                    )
-                    if audio_model_card == "Qwen/Qwen3-TTS-12Hz-1.7B-Base":
-                        row = col.row(align=True)
-                        row.prop(context.scene, "audio_text", text="Text Ref.")
-                    if audio_model_card == "Chatterbox" or audio_model_card == "ChatterboxTurbo":
-                        col.prop(context.scene, "chat_exaggeration")
-                        col.prop(context.scene, "chat_pace")
-                        col.prop(context.scene, "chat_temperature")
-                    else:
-                        if audio_model_card == "WhisperSpeech":
-                            col.prop(context.scene, "audio_speed", text="Speed")
-                        else:
-                            col.prop(context.scene, "audio_speed_tts", text="Speed")
+                col.prop(context.scene, "generate_movie_x", text="X")
+                col.prop(context.scene, "generate_movie_y", text="Y")
+            col = layout.column(align=True)
+            if _has(UISection.FRAMES):
+                col.prop(context.scene, "generate_movie_frames", text="Frames")
+            if _has(UISection.AUDIO_DURATION):
+                col.prop(context.scene, "audio_length_in_f", text="Frames")
+            if type == "audio" and _has(UISection.AUDIO_REF):
+                row = col.row(align=True)
+                row.prop(context.scene, "audio_path", text="Speaker Ref.")
+                row.operator(
+                    "sequencer.open_audio_filebrowser", text="", icon="FILEBROWSER"
+                )
+            if type == "audio" and _has(UISection.TEXT_REF):
+                row = col.row(align=True)
+                row.prop(context.scene, "audio_text", text="Text Ref.")
+            if type == "audio" and _has(UISection.CHAT_PARAMS):
+                col.prop(context.scene, "chat_exaggeration")
+                col.prop(context.scene, "chat_pace")
+                col.prop(context.scene, "chat_temperature")
 
-                if type == "audio" and (audio_model_card == "WhisperSpeech" or audio_model_card == "Chatterbox" or audio_model_card == "Chatterbox" or audio_model_card == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"):
-                    pass
+            if _has(UISection.STEPS) and not scene.use_lcm:
+                col.prop(
+                    context.scene,
+                    "movie_num_inference_steps",
+                    text="Quality Steps",
+                )
 
-                elif type == "audio" and (
-                    addon_prefs.audio_model_card
-                    == "tintwotin/Foundation-1-Diffusers"
-                ):
+            if _has(UISection.GUIDANCE) and not scene.use_lcm:
+                if image_model_card == "Shitao/OmniGen-v1-diffusers" and type == "image":
                     col.prop(
-                        context.scene, "movie_num_inference_steps", text="Quality Steps"
+                        context.scene, "img_guidance_scale", text="Image Power"
                     )
-                else:
-                    if (
-                        (
-                            type == "audio"
-                            and (
-                                audio_model_card == "parler-tts/parler-tts-mini-v1"
-                                or audio_model_card == "parler-tts/parler-tts-large-v1"
-                            )
-                            or (
-                                type == "image"
-                                and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                            )
-                            or (
-                                type == "movie"
-                                and (movie_model_card == "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
-                            )
-                            or (
-                                type == "movie"
-                                and (movie_model_card == "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-                            )
-                            or (
-                                type == "movie"
-                                and (movie_model_card == "Lightricks/LTX-2")
-                            )
-                            or (
-                                type == "movie"
-                                and (movie_model_card == "LTX-2 Multi-Input File")
-                            )                            
-                        )
-                    ):
-                        pass
-                    else:
-                        col.prop(
-                            context.scene,
-                            "movie_num_inference_steps",
-                            text="Quality Steps",
-                        )
+                col.prop(context.scene, "movie_num_guidance", text="Word Power")
 
-                    if (
-                        (
-                            type == "image"
-                            and image_model_card == "lzyvegetable/FLUX.1-schnell"
-                        )
-                        or (
-                            type == "image"
-                            and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                        )
-                        or (
-                            type == "audio"
-                            and (
-                                audio_model_card == "parler-tts/parler-tts-mini-v1"
-                                or audio_model_card == "parler-tts/parler-tts-large-v1"
-                                or audio_model_card == "SWivid/F5-TTS"
-                                or audio_model_card == "Chatterbox"
-                                or audio_model_card == "ChatterboxTurbo"
-                                or audio_model_card == "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
-                            )
-                        )
-                        or (
-                            scene.use_lcm
-                        )
-                        or (
-                            type == "movie"
-                            and (movie_model_card == "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
-                        )
-                        or (
-                            type == "movie"
-                            and (movie_model_card == "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-                        ) 
-                        or (
-                            type == "movie"
-                            and (movie_model_card == "Lightricks/LTX-2")
-                        ) 
-                        or (
-                            type == "movie"
-                            and (movie_model_card == "LTX-2 Multi-Input File")
-                        )                        
-                    ):
-                        pass
-                    else:
-                        if (
-                            image_model_card == "Shitao/OmniGen-v1-diffusers"
-                            and type == "image"
-                        ) or (
-                            image_model_card == "Qwen/Qwen-Image-Edit-2511"
-                            and type == "image"
-                        ):
-                            col.prop(
-                                context.scene, "img_guidance_scale", text="Image Power"
-                            )
-                        col.prop(context.scene, "movie_num_guidance", text="Word Power")
+            if _has(UISection.SEED):
+                col = col.column(align=True)
+                row = col.row(align=True)
+                sub_row = row.row(align=True)
+                row.prop(
+                    context.scene, "movie_use_random", text="", icon="QUESTION"
+                )
+                sub_row.prop(context.scene, "movie_num_seed", text="Seed")
+                sub_row.active = not context.scene.movie_use_random
 
-                if not (
-                    type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                ):
-                    col = col.column(align=True)
-                    row = col.row(align=True)
-                    sub_row = row.row(align=True)
-                    row.prop(
-                        context.scene, "movie_use_random", text="", icon="QUESTION"
-                    )
-                    sub_row.prop(context.scene, "movie_num_seed", text="Seed")
-                    sub_row.active = not context.scene.movie_use_random
+            if type == "image" and (plugin is None or plugin.UI_SECTIONS):
+                col = col.column(heading="Enhance", align=True)
+                row = col.row()
+                row.prop(context.scene, "refine_sd", text="Quality")
+                sub_col = col.row()
+                sub_col.active = context.scene.refine_sd
 
-                if type == "image" and not (
-                    type == "image" and image_model_card == "ZhengPeng7/BiRefNet_HR"
-                ):
-                    col = col.column(heading="Enhance", align=True)
-                    row = col.row()
-                    row.prop(context.scene, "refine_sd", text="Quality")
-                    sub_col = col.row()
-                    sub_col.active = context.scene.refine_sd
+                if _has(UISection.ENHANCE):
+                    row.prop(context.scene, "use_lcm", text="Speed")
 
-                    if (
-                        (
-                            type == "image"
-                            and image_model_card
-                            == "stabilityai/stable-diffusion-xl-base-1.0"
-                        )
-                        or (
-                            type == "image"
-                            and image_model_card
-                            == "xinsir/controlnet-openpose-sdxl-1.0"
-                        )
-                        or (
-                            type == "image"
-                            and image_model_card
-                            == "xinsir/controlnet-scribble-sdxl-1.0"
-                        )
-                        or (
-                            type == "image"
-                            and image_model_card
-                            == "diffusers/controlnet-canny-sdxl-1.0-small"
-                        )
-                        or (
-                            type == "image"
-                            and image_model_card == "segmind/Segmind-Vega"
-                        )
-                    ):
-                        row.prop(context.scene, "use_lcm", text="Speed")
+                if image_model_card == "stabilityai/stable-diffusion-xl-base-1.0":
+                    col = col.column(heading="Details", align=True)
 
-                    # ADetailer
-                    if image_model_card == "stabilityai/stable-diffusion-xl-base-1.0":
-                        col = col.column(heading="Details", align=True)
+                row = col.row()
+                if image_model_card == "stabilityai/stable-diffusion-xl-base-1.0":
+                    row.prop(context.scene, "adetailer", text="Faces")
 
-                    row = col.row()
-                    if image_model_card == "stabilityai/stable-diffusion-xl-base-1.0":
-                        row.prop(context.scene, "adetailer", text="Faces")
+                row.prop(context.scene, "aurasr", text="Upscale 4x")
 
-                    # AuraSR
-                    # col = col.column(heading="Upscale", align=True)
-                    row.prop(context.scene, "aurasr", text="Upscale 4x")
-                    # row = col.row()
-                if (type == "movie") and (
-                    movie_model_card == "stabilityai/stable-diffusion-xl-base-1.0"
-                ):
-                    col = layout.column(heading="Upscale", align=True)
-                    col.prop(context.scene, "aurasr", text="4x")
-                if type == "audio" and audio_model_card == "SWivid/F5-TTS":
-                    col = layout.column(heading="Remove", align=True)
-                    col.prop(context.scene, "remove_silence", text="Silence")
+            if type == "movie" and movie_model_card == "stable-diffusion-xl/frame2frame":
+                col = layout.column(heading="Upscale", align=True)
+                col.prop(context.scene, "aurasr", text="4x")
 
             # LoRA.
-            if (
-                (
-                    image_model_card == "stabilityai/stable-diffusion-xl-base-1.0"
-                    or image_model_card == "xinsir/controlnet-openpose-sdxl-1.0"
-                    or image_model_card == "diffusers/controlnet-canny-sdxl-1.0-small"
-                    or image_model_card == "xinsir/controlnet-scribble-sdxl-1.0"
-                    or image_model_card == "lzyvegetable/FLUX.1-schnell"
-                    or image_model_card == "yuvraj108c/FLUX.1-Kontext-dev"
-                    or image_model_card == "lodestones/Chroma"
-                    or image_model_card == "Tongyi-MAI/Z-Image"
-                    or image_model_card == "Tongyi-MAI/Z-Image-Turbo"
-                    or image_model_card == "Qwen/Qwen-Image-2512"
-                    or image_model_card == "Qwen/Qwen-Image-Edit-2511"
-                    or image_model_card == "ChuckMcSneed/FLUX.1-dev"
-                    or image_model_card == "Runware/BFL-FLUX.2-klein-base-4B"
-                    or image_model_card == "black-forest-labs/FLUX.2-klein-9b-kv"
-                    or image_model_card == "diffusers/FLUX.2-dev-bnb-4bit"
-                    or image_model_card == "fuliucansheng/FLUX.1-Canny-dev-diffusers-lora"
-                    or image_model_card == "romanfratric234/FLUX.1-Depth-dev-lora"
-                    or image_model_card == "Runware/FLUX.1-Redux-dev"
-                    or image_model_card == "diffusers/FLUX.2-dev-bnb-4bit"
-                )
-                and type == "image"
-            ) or ((
-                type == "movie")
-                and (movie_model_card == "stabilityai/stable-diffusion-xl-base-1.0"
-                or (movie_model_card == "hunyuanvideo-community/HunyuanVideo")
-                or (movie_model_card == "Wan-AI/Wan2.2-I2V-A14B-Diffusers")
-                or (movie_model_card == "Wan-AI/Wan2.2-T2V-A14B-Diffusers")
-                or (movie_model_card == "Wan-AI/Wan2.1-VACE-1.3B-diffusers")
-                or (movie_model_card == "Lightricks/LTX-2")
-                or (movie_model_card == "LTX-2 Multi-Input File")
-            )):
+            if _has(UISection.LORA):
                 layout = self.layout
                 layout.use_property_split = True
                 layout.use_property_decorate = False
@@ -710,12 +450,8 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
 
         if type == "image":
             col.prop(addon_prefs, "image_model_card", text=" ")
-            if (
-                addon_prefs.image_model_card
-                == "adamo1139/stable-diffusion-3.5-large-ungated"
-                or addon_prefs.image_model_card
-                == "diffusers/FLUX.2-dev-bnb-4bit"
-            ):
+            from ..models.base import InputSpec as _InputSpec
+            if plugin is not None and _InputSpec.HF_TOKEN in plugin.INPUTS:
                 row = col.row(align=True)
                 row.prop(addon_prefs, "hugginface_token")
                 row.operator(
@@ -747,7 +483,7 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
             row.scale_y = 1.2
             if type == "movie":
                 # Frame by Frame
-                if movie_model_card == "stabilityai/stable-diffusion-xl-base-1.0":
+                if movie_model_card == "stable-diffusion-xl/frame2frame":
                     row.operator(
                         "sequencer.text_to_generator", text="Generate from Strips"
                     )
