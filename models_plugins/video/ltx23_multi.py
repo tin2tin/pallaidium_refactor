@@ -47,11 +47,13 @@ class LTX2_3MultiPlugin(ModelPlugin):
     MODEL_TYPE   = "video"
     DESCRIPTION  = "Two-stage distilled LTX-2.3 (SDNQ 4-bit) — text/image/audio-to-video with audio output"
 
+    # All multimodal inputs are defined but optional
     INPUTS       = InputSpec.PROMPT | InputSpec.NEG_PROMPT | InputSpec.IMAGE | InputSpec.LORA | InputSpec.AUDIO_REF
     UI_SECTIONS  =[
         UISection.PROMPT, UISection.NEG_PROMPT, UISection.VIDEO_STRIP,
         UISection.RESOLUTION, UISection.FRAMES, UISection.SEED, UISection.LORA,
     ]
+    # Standard ParamSpec without unsupported UI fields
     PARAMS            = ParamSpec(width=768, height=512, frames=121, steps=8, guidance=1.0)
     REQUIRED_PACKAGES =["torch", "torchaudio", "soundfile", "av", "diffusers", "transformers", "sdnq"]
     supports_inpaint  = False
@@ -100,34 +102,99 @@ class LTX2_3MultiPlugin(ModelPlugin):
         w = stage1_w * 2
         h = stage1_h * 2
 
-        # ── Resolve Image & Audio Inputs (Optional safely) ──────────────────
+        # ── Resolve Image & Audio Inputs (With Priority Overrides) ──────────
         image_input = inputs.image
-        if image_input is None and getattr(inputs, "video_path", None):
-            image_input = load_first_frame(inputs.video_path)
+        
+        # Robustly find the video track mapping
+        vid_path = None
+        for attr in["video_path", "video", "video_ref"]:
+            val = getattr(inputs, attr, None)
+            if val and isinstance(val, str) and os.path.exists(val):
+                vid_path = val
+                break
+                
+        # Robustly find the dedicated Sound Strip mapping
+        explicit_audio = None
+        for attr in["audio_path", "audio", "audio_ref", "sound", "sound_path"]:
+            val = getattr(inputs, attr, None)
+            if val and isinstance(val, str) and os.path.exists(val):
+                explicit_audio = val
+                break
 
-        sound_path = getattr(inputs, "audio_ref", None)
+        sound_path = explicit_audio
+
+        # Probe the Video Strip file for modalities if provided
+        if vid_path:
+            try:
+                import av
+                with av.open(vid_path) as container:
+                    has_video = any(s.type == 'video' for s in container.streams)
+                    has_audio = any(s.type == 'audio' for s in container.streams)
+                    
+                    if has_video and image_input is None:
+                        image_input = load_first_frame(vid_path)
+                        print("[DEBUG] Extracted video track for Image Condition.")
+                    
+                    if has_audio:
+                        if explicit_audio:
+                            print(f"[DEBUG] Video contains audio, but overriding with explicitly provided Sound Strip audio.")
+                        else:
+                            sound_path = vid_path
+                            print("[DEBUG] Extracted audio track from video for Audio Condition.")
+            except Exception as e:
+                print(f"[DEBUG] Could not probe video_path with av ({e}). Falling back to simple frame extraction.")
+                if image_input is None:
+                    try:
+                        image_input = load_first_frame(vid_path)
+                    except Exception:
+                        pass
+
+        print("="*50)
+        print("[DEBUG] LTX-2.3 Multimodal Media Detection:")
+        print(f"  -> Image Input Provided: {'YES' if image_input is not None else 'NO'}")
+        print(f"  -> Audio Input Provided: {'YES' if sound_path is not None else 'NO'}")
+        if sound_path:
+            print(f"  -> Active Audio Path: {sound_path}")
+        print("="*50)
 
         # ── Frame Count Calculation ─────────────────────────────────────────
         if sound_path:
+            dur_s = None
             try:
+                # Try reading with soundfile (works for wav/flac/ogg)
                 import soundfile as sf
                 info = sf.info(sound_path)
                 dur_s = info.frames / info.samplerate
-                print(f"LTX-2.3: Audio condition detected ({dur_s:.2f}s). Overriding frame count.")
-            except Exception:
+                print(f"[DEBUG] Audio duration calculated via soundfile: {dur_s:.2f}s")
+            except Exception as e1:
+                try:
+                    # Fallback to PyAV (works for MP4/WebM video containers)
+                    import av
+                    with av.open(sound_path) as container:
+                        audio_stream = next((s for s in container.streams if s.type == 'audio'), None)
+                        if audio_stream and audio_stream.duration:
+                            dur_s = float(audio_stream.duration * audio_stream.time_base)
+                            print(f"[DEBUG] Audio duration calculated via av: {dur_s:.2f}s")
+                except Exception as e2:
+                    print(f"[DEBUG] Failed to read audio duration (sf: {e1}, av: {e2}).")
+
+            if dur_s is None:
+                print("[DEBUG] Falling back to requested frames for duration.")
                 dur_s = inputs.frames / fps
+
             raw = dur_s * fps
             num_frames = int(((raw + 7) // 8) * 8) + 1
             num_frames = max(9, num_frames)
+            print(f"[DEBUG] Overriding frame count based on audio: {num_frames} frames.")
         else:
             target = inputs.frames
             num_frames = max(9, ((target - 1) // 8) * 8 + 1)
             dur_s = num_frames / fps
             
-        print("Number of frames: " + str(num_frames))
+        print(f"[DEBUG] Final Target Number of frames: {num_frames}")
         _flush()
 
-        # Parse Image Conditions (Only if image is present)
+        # Parse Image Conditions
         image_conditions = None
         if image_input is not None:
             if isinstance(image_input, str):
@@ -136,6 +203,7 @@ class LTX2_3MultiPlugin(ModelPlugin):
             elif hasattr(image_input, "convert"):
                 image_input = image_input.convert("RGB")
             image_conditions =[LTX2ImageCondition(image=image_input, frame=0, strength=1.0)]
+            print("[DEBUG] Image Condition successfully prepared.")
 
         # ── Step 0: Text encoding ───────────────────────────────────────────
         print("LTX-2.3: Text encoding")
@@ -176,19 +244,17 @@ class LTX2_3MultiPlugin(ModelPlugin):
             pipe.scheduler.config, use_dynamic_shifting=False, shift_terminal=None,
         )
 
-        # Parse Audio Conditions (Only if audio is present)
+        # Parse Audio Conditions
         audio_conditions = None
         if sound_path and hasattr(pipe, "audio_vae") and pipe.audio_vae:
             target_sr = pipe.audio_vae.config.sample_rate
             try:
                 waveform = load_audio(sound_path, target_sample_rate=target_sr, seconds=dur_s)
                 audio_conditions =[LTX2AudioCondition(audio=waveform, strength=1.0)]
-                print(f"LTX-2.3: Audio successfully loaded into pipeline condition.")
+                print(f"[DEBUG] Audio Condition successfully loaded and resampled to {target_sr}Hz.")
             except Exception as e:
-                print(f"LTX-2.3 Warning: Failed to load audio condition: {e}")
+                print(f"[DEBUG] Warning: Failed to load audio condition in pipeline: {e}")
 
-        # Rely EXCLUSIVELY on leaf_level offloading. It correctly catches the internal
-        # vae.encode() calls and moves modules to the GPU just-in-time.
         pipe.enable_group_offload(
             onload_device=onload_device, 
             offload_type="leaf_level",
@@ -204,28 +270,36 @@ class LTX2_3MultiPlugin(ModelPlugin):
             num_inference_steps=8, sigmas=DISTILLED_SIGMA_VALUES,
             guidance_scale=1.0, generator=generator,
             output_type="latent", return_dict=False,
-            use_cross_timestep=True, # Critical for Audio+Image cross-attention mapping!
+            use_cross_timestep=True, # Critical for Audio+Image cross-attention mapping
         )
         
-        # Inject optional modalities
         if image_conditions is not None:
             stage1_kw["image_conditions"] = image_conditions
         if audio_conditions is not None:
             stage1_kw["audio_conditions"] = audio_conditions
 
+        # Gentle Guidance overrides. Excludes destructive audio modalities overrides
+        if image_conditions is not None and audio_conditions is not None:
+            print("[DEBUG] Image + Audio detected: Applying gentle alignment STG guidance.")
+            stage1_kw["stg_scale"] = 1.0
+            stage1_kw["spatio_temporal_guidance_blocks"] = [28]
+            stage1_kw["guidance_rescale"] = 0.7
+
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch_dtype):
             outputs = pipe(**stage1_kw)
 
+        # Robust extraction for multimodal pipelines
         if isinstance(outputs, (tuple, list)):
             video_latent = outputs[0].detach().to(offload_device, copy=True)
             audio_latent = outputs[1].detach().to(offload_device, copy=True) if len(outputs) > 1 and outputs[1] is not None else None
         else:
             video_latent = outputs.detach().to(offload_device, copy=True)
             audio_latent = None
-        
-        if audio_latent is not None:
-            print("LTX-2.3: Stage 1 successfully generated audio latent.")
             
+        print(f"[DEBUG] Stage 1 Results:")
+        print(f"  -> Video Latent Generated: {'YES' if video_latent is not None else 'NO'}")
+        print(f"  -> Audio Latent Generated: {'YES' if audio_latent is not None else 'NO (Failed or ignored by pipeline)'}")
+
         del pipe, transformer
         _flush()
 
@@ -272,19 +346,16 @@ class LTX2_3MultiPlugin(ModelPlugin):
             sigmas=STAGE_2_DISTILLED_SIGMA_VALUES,
             guidance_scale=1.0, generator=generator,
             output_type="latent", return_dict=False,
-            use_cross_timestep=True, # Critical for Audio+Image cross-attention mapping!
+            use_cross_timestep=True,
         )
         
-        # Re-inject optional modalities correctly for Stage 2
         if image_conditions is not None:
             refine_kw["image_conditions"] = image_conditions
             
         if audio_conditions is not None:
-            # Pass CONDITIONS to Stage 2 (not audio_latents) so the mask remains 1.0 
-            # and perfectly preserves the audio waveform during refinement!
             refine_kw["audio_conditions"] = audio_conditions
-        elif audio_latent is not None:
-            # Fall back to refining generated audio (e.g. Pure Text-to-Video generation)
+            
+        if audio_latent is not None:
             refine_kw["audio_latents"] = audio_latent.to(onload_device, dtype=torch_dtype)
 
         with torch.inference_mode(), torch.autocast("cuda", dtype=torch_dtype):
@@ -292,10 +363,16 @@ class LTX2_3MultiPlugin(ModelPlugin):
 
         if isinstance(outputs2, (tuple, list)):
             final_v = outputs2[0].detach().to(offload_device, copy=True)
-            final_a = outputs2[1].detach().to(offload_device, copy=True) if len(outputs2) > 1 and outputs2[1] is not None else audio_latent
+            if len(outputs2) > 1 and outputs2[1] is not None:
+                final_a = outputs2[1].detach().to(offload_device, copy=True)
+                print("[DEBUG] Stage 2 Results: Audio Latent was refined.")
+            else:
+                final_a = audio_latent
+                print("[DEBUG] Stage 2 Results: No refined audio returned. Falling back to Stage 1 audio latent.")
         else:
             final_v = outputs2.detach().to(offload_device, copy=True)
             final_a = audio_latent
+            print("[DEBUG] Stage 2 Results: Pipeline returned singular output. Falling back to Stage 1 audio latent.")
             
         del refine_pipe, transformer2, up_latent, prompt_embeds, prompt_attention_mask
         _flush()
@@ -314,17 +391,18 @@ class LTX2_3MultiPlugin(ModelPlugin):
 
         audio_out      = None
         audio_sr       = 24000
+        
         if final_a is not None and hasattr(decode_pipe, "audio_vae") and decode_pipe.audio_vae:
-            print("LTX-2.3: Decoding final audio latent.")
             audio_vae = decode_pipe.audio_vae.to(onload_device)
             vocoder   = decode_pipe.vocoder.to(onload_device)
             audio_sr  = getattr(vocoder.config, "output_sampling_rate", 24000)
+            print(f"[DEBUG] Audio VAE Decode Triggered! Latent shape: {final_a.shape}")
             with torch.inference_mode():
                 mel       = audio_vae.decode(final_a.to(onload_device, dtype=audio_vae.dtype), return_dict=False)[0]
                 audio_out = vocoder(mel).cpu()
             del audio_vae, vocoder
         else:
-            print("LTX-2.3: No final audio latent found to decode.")
+            print(f"[DEBUG] Audio decode skipped. (final_a valid: {final_a is not None}, has audio_vae: {hasattr(decode_pipe, 'audio_vae')})")
 
         del decode_pipe, vae, final_v, final_a
         _flush()
@@ -332,17 +410,18 @@ class LTX2_3MultiPlugin(ModelPlugin):
         # ── Save ────────────────────────────────────────────────────────────
         dst_path = solve_path(clean_filename(str(seed) + "_" + inputs.prompt[:40]) + ".mp4")
         if audio_out is not None:
-            print("LTX-2.3: Encoding final video with audio.")
             encode_video(
                 torch.from_numpy((video[0] * 255).round().astype("uint8")),
                 fps=fps, audio=audio_out[0].float().cpu(),
                 audio_sample_rate=audio_sr, output_path=dst_path,
             )
+            print("[DEBUG] Muxed MP4 Output generated WITH AUDIO.")
         else:
-            print("LTX-2.3: Encoding final video without audio.")
             encode_video(
                 torch.from_numpy((video[0] * 255).round().astype("uint8")),
                 fps=fps, output_path=dst_path,
             )
+            print("[DEBUG] Muxed MP4 Output generated WITHOUT AUDIO (video only).")
+            
         print(f"LTX-2.3 saved: {dst_path}")
         return dst_path
