@@ -16,7 +16,8 @@ class FluxReduxPlugin(ModelPlugin):
         UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
     ]
     PARAMS       = ParamSpec(steps=25, guidance=3.5)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "transformers"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers", "transformers"]
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch

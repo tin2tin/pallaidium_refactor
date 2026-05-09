@@ -35,6 +35,7 @@ class InputSpec(Flag):
     LORA          = auto()   # LoRA files with per-file weights
     API_KEY       = auto()   # external runtime API key (e.g. MiniMax)
     HF_TOKEN      = auto()   # HuggingFace token (gated-model download)
+    MUSIC_PARAMS  = auto()   # BPM, key, time signature, lyrics for music generation
 
 
 # ---------------------------------------------------------------------------
@@ -85,6 +86,7 @@ class UISection(str, Enum):
     POSE_TOGGLE       = "pose_toggle"      # "Read as OpenPose Rig Image" checkbox
     SCRIBBLE_TOGGLE   = "scribble_toggle"  # "Read as Scribble Image" checkbox
     ENHANCE           = "enhance"          # Quality / Speed / Faces / Upscale toggles
+    MUSIC_PARAMS      = "music_params"     # BPM, key, time signature, and lyrics inputs
 
 
 # ---------------------------------------------------------------------------
@@ -176,6 +178,12 @@ class ModelInputs:
     illumination_style: str = ""
     light_direction:    str = ""
 
+    # Music generation (ACE-Step etc.)
+    bpm:              int = 0    # 0 = model estimates
+    lyrics:           str = ""
+    key_scale:        str = ""   # e.g. "C major", "A minor"
+    time_signature:   str = ""   # e.g. "4" for 4/4, "3" for 3/4
+
 
 # ---------------------------------------------------------------------------
 # ModelPlugin — base class every plugin must subclass
@@ -210,6 +218,13 @@ class ModelPlugin:
     # ---- Python packages needed (for availability check) ------------------
 
     REQUIRED_PACKAGES: list = []
+
+    # ---- Capability flags (read by the dispatcher and UI) -----------------
+
+    supports_inpaint:          bool = True   # False → inpaint mode never activated
+    supports_img2img:          bool = True   # False → img2img conversion never activated
+    requires_input_strip:      bool = False  # True  → generation always requires a selected strip
+    uses_standard_input_strip: bool = True   # False → plugin provides its own strip input UI
 
     # -----------------------------------------------------------------------
 
@@ -247,13 +262,13 @@ class ModelPlugin:
         """
         raise NotImplementedError(f"{self.__class__.__name__}.generate() is not implemented")
 
-    def draw_custom_ui(self, layout, context) -> None:
-        """Optional: draw any UI elements not covered by UI_SECTIONS.
+    def draw_custom_ui(self, col, context) -> bool:
+        """Optional: draw model-specific UI inside the input selector column.
 
-        Called after all standard sections are rendered. Use this for
-        model-specific controls that don't fit any standard UISection.
+        Return True  → completely replaced the standard input_strips dropdown.
+        Return False → either added extra controls, or did nothing.
         """
-        pass
+        return False
 
     def __repr__(self) -> str:
         return f"<{self.__class__.__name__} id={self.MODEL_ID!r} type={self.MODEL_TYPE!r}>"

@@ -12,6 +12,7 @@ class _SD3Base(ModelPlugin):
         UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
     ]
     REQUIRED_PACKAGES = ["torch", "diffusers"]
+    supports_inpaint  = False
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs):
         import torch

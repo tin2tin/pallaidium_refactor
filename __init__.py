@@ -502,6 +502,22 @@ def register():
 
     bpy.types.Scene.illumination_style = bpy.props.EnumProperty(name="Lighting Style", items=get_enum_items(ILLUMINATION_OPTIONS), default="sunshine from window")
     bpy.types.Scene.light_direction = bpy.props.EnumProperty(name="Light Direction", items=get_enum_items(DIRECTION_OPTIONS), default="auto")
+    bpy.types.Scene.music_bpm = bpy.props.IntProperty(
+        name="BPM", default=0, min=0, max=300,
+        description="Beats per minute (0 = model estimates)"
+    )
+    bpy.types.Scene.music_lyrics = bpy.props.StringProperty(
+        name="Lyrics", default="",
+        description="Lyrics text. Supports tags like [verse], [chorus]"
+    )
+    bpy.types.Scene.music_key_scale = bpy.props.StringProperty(
+        name="Key", default="",
+        description="Musical key, e.g. 'C major', 'A minor' (blank = model estimates)"
+    )
+    bpy.types.Scene.music_time_signature = bpy.props.StringProperty(
+        name="Time Signature", default="",
+        description="Time signature, e.g. '4' for 4/4, '3' for 3/4 (blank = model estimates)"
+    )
 
 def unregister():
     for cls in classes:
@@ -536,6 +552,10 @@ def unregister():
     del bpy.types.Scene.ip_adapter_style_folder
     del bpy.types.Scene.ip_adapter_face_files_to_import
     del bpy.types.Scene.ip_adapter_style_files_to_import
+    del bpy.types.Scene.music_bpm
+    del bpy.types.Scene.music_lyrics
+    del bpy.types.Scene.music_key_scale
+    del bpy.types.Scene.music_time_signature
 
 if __name__ == "__main__":
     register()

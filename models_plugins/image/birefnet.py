@@ -13,7 +13,10 @@ class BiRefNetPlugin(ModelPlugin):
     INPUTS       = InputSpec.IMAGE
     UI_SECTIONS  = []
     PARAMS       = ParamSpec()
-    REQUIRED_PACKAGES = ["torch", "torchvision", "transformers", "PIL"]
+    REQUIRED_PACKAGES          = ["torch", "torchvision", "transformers", "PIL"]
+    supports_inpaint           = False
+    supports_img2img           = False
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch

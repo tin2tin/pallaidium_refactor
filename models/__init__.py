@@ -19,7 +19,7 @@ import traceback
 import types
 from pathlib import Path
 
-from .base import ModelPlugin, UISection, InputSpec
+from .base import ModelPlugin, UISection, InputSpec, ParamSpec
 
 # ---------------------------------------------------------------------------
 # Registry
@@ -100,12 +100,61 @@ def _load_plugin_file(py_file: Path) -> list[ModelPlugin]:
         ):
             try:
                 inst = obj()
-                instances.append(inst)
             except Exception:
                 print(f"[Pallaidium] Could not instantiate {obj.__name__} in {py_file.name}:")
                 traceback.print_exc()
+                continue
+
+            errors = _validate_plugin(inst, py_file.name)
+            if errors:
+                for err in errors:
+                    print(f"[Pallaidium] {obj.__name__} ({py_file.name}): {err}")
+                print(f"[Pallaidium] {obj.__name__} skipped due to validation errors above.")
+                continue
+
+            instances.append(inst)
 
     return instances
+
+
+_VALID_MODEL_TYPES = {"video", "image", "audio", "text"}
+_VALID_UI_SECTIONS = {s.value for s in UISection}
+
+
+def _validate_plugin(inst: ModelPlugin, filename: str) -> list[str]:
+    """Return a list of human-readable error strings, empty if plugin is valid."""
+    errors = []
+
+    if not inst.MODEL_ID:
+        errors.append("MODEL_ID is empty")
+    if not inst.DISPLAY_NAME:
+        errors.append("DISPLAY_NAME is empty")
+    if inst.MODEL_TYPE not in _VALID_MODEL_TYPES:
+        errors.append(
+            f"MODEL_TYPE {inst.MODEL_TYPE!r} is not one of {sorted(_VALID_MODEL_TYPES)}"
+        )
+
+    if not isinstance(inst.PARAMS, ParamSpec):
+        errors.append(
+            f"PARAMS must be a ParamSpec instance, got {type(inst.PARAMS).__name__!r}"
+        )
+
+    if not isinstance(inst.INPUTS, InputSpec):
+        errors.append(
+            f"INPUTS must be an InputSpec flag, got {type(inst.INPUTS).__name__!r}"
+        )
+
+    if not isinstance(inst.UI_SECTIONS, list):
+        errors.append("UI_SECTIONS must be a list")
+    else:
+        for sec in inst.UI_SECTIONS:
+            if not isinstance(sec, UISection):
+                errors.append(
+                    f"UI_SECTIONS contains invalid entry {sec!r} "
+                    f"(must be a UISection member, e.g. UISection.PROMPT)"
+                )
+
+    return errors
 
 
 # ---------------------------------------------------------------------------

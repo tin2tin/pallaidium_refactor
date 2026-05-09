@@ -17,6 +17,8 @@ class Flux2DevPlugin(ModelPlugin):
     ]
     PARAMS       = ParamSpec(steps=8, guidance=3.5)
     REQUIRED_PACKAGES = ["torch", "diffusers", "transformers"]
+    supports_inpaint  = False
+    supports_img2img  = False
 
     def load(self, prefs, scene, **kw):
         import torch
@@ -49,6 +51,28 @@ class Flux2DevPlugin(ModelPlugin):
             pipe.enable_model_cpu_offload()
             pipe.vae.enable_tiling()
         return {"pipe": pipe, "converter": None, "refiner": None, "preprocessor": None}
+
+    def draw_custom_ui(self, col, context) -> bool:
+        scene = context.scene
+        try:
+            col.prop(scene, "input_strips", text="Input")
+        except Exception:
+            pass
+        if scene.sequence_editor is None:
+            return True
+        for i in range(1, scene.flux_visible_strips + 1):
+            row = col.row(align=True)
+            row.prop_search(
+                scene, f"flux_strip_{i}", scene.sequence_editor, "strips",
+                text="", icon="FILE_IMAGE",
+            )
+            op = row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER")
+            op.action = f"flux_select{i}"
+            if i == scene.flux_visible_strips and scene.flux_visible_strips < 9:
+                if scene.flux_visible_strips > 1:
+                    row.operator("object.flux_hide_strip", text="", icon="REMOVE").strip_index = i
+                row.operator("object.flux_add_strip", text="", icon="ADD")
+        return True
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs):
         import torch

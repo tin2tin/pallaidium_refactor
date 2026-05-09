@@ -20,7 +20,10 @@ class SDXLCannyPlugin(ModelPlugin):
         UISection.ENHANCE,
     ]
     PARAMS       = ParamSpec(steps=30)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "cv2"]
+    REQUIRED_PACKAGES      = ["torch", "diffusers", "cv2"]
+    supports_inpaint       = False
+    supports_img2img       = False
+    requires_input_strip   = True
 
     def load(self, prefs, scene, **kw):
         import torch

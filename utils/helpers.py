@@ -670,6 +670,23 @@ def clear_cuda_cache():
     if torch.backends.mps.is_available():
         torch.mps.empty_cache()
 
+def release_model_cache(cache: dict) -> None:
+    import gc
+    skip = {"last_model_card"}
+    for key in list(cache.keys()):
+        if key in skip:
+            continue
+        obj = cache[key]
+        if obj is not None:
+            cache[key] = None
+            del obj
+    gc.collect()
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        torch.cuda.reset_max_memory_allocated()
+    if torch.backends.mps.is_available():
+        torch.mps.empty_cache()
+
 def python_exec():
     """Returns the path to the Blender internal python executable"""
     return sys.executable
@@ -1003,48 +1020,28 @@ def input_strips_updated(self, context):
         }:
             scene.input_strips = "input_strips"
 
-        # Handle specific image models
-        if image_model == "lzyvegetable/FLUX.1-schnell":
-            scene.movie_num_inference_steps = 4
-            scene.movie_num_guidance = 0
-        elif image_model == "ChuckMcSneed/FLUX.1-dev":
-            scene.movie_num_inference_steps = 25
-            scene.movie_num_guidance = 4
-        elif image_model == "Tongyi-MAI/Z-Image-Turbo":
-            scene.movie_num_inference_steps = 8
-            scene.movie_num_guidance = 0
-        elif image_model == "Tongyi-MAI/Z-Image":
-            scene.movie_num_inference_steps = 28
-            scene.movie_num_guidance = 4
+        try:
+            from ..models import get_plugin as _gp
+            _p = _gp(image_model)
+            if _p:
+                scene.movie_num_inference_steps = _p.PARAMS.steps
+                scene.movie_num_guidance = _p.PARAMS.guidance
+        except Exception:
+            pass
             
     # Movie Type Handling
     elif scene_type == "movie":
-        if movie_model == "hunyuanvideo-community/HunyuanVideo":
-            #scene.generate_movie_x = 960
-            #scene.generate_movie_y = 544
-            #scene.generate_movie_frames = 49
-            scene.movie_num_inference_steps = 40
-            scene.movie_num_guidance = 4
-        elif movie_model in {
-            "THUDM/CogVideoX-5b",
-            "THUDM/CogVideoX-2b"
-        }:
-            scene.generate_movie_x = 720
-            scene.generate_movie_y = 480
-            scene.generate_movie_frames = 49
-            scene.movie_num_inference_steps = 50
-            scene.movie_num_guidance = 6
-        elif movie_model == "Skywork/SkyReels-V1-Hunyuan-T2V":
-            #scene.generate_movie_x = 960
-            #scene.generate_movie_y = 544
-            #scene.generate_movie_frames = 49
-            scene.movie_num_inference_steps = 40
-            scene.movie_num_guidance = 1
-#        elif movie_model in {"LTX-2 Multi-Input File","rootonchair/LTX-2-19b-distilled","Lighttricks/LTX-2"}:
-#            scene.generate_movie_x = 512
-#            scene.generate_movie_y = 288
-#            scene.generate_movie_frames = 121            
-        # Handle specific input strips for movie types
+        try:
+            from ..models import get_plugin as _gp
+            _p = _gp(movie_model)
+            if _p:
+                scene.movie_num_inference_steps = _p.PARAMS.steps
+                scene.movie_num_guidance = _p.PARAMS.guidance
+                scene.generate_movie_x = _p.PARAMS.width
+                scene.generate_movie_y = _p.PARAMS.height
+                scene.generate_movie_frames = _p.PARAMS.frames
+        except Exception:
+            pass
         if (
             movie_model in {
                 "Hailuo/MiniMax/img2vid",
@@ -1053,12 +1050,14 @@ def input_strips_updated(self, context):
         ) and scene.input_strips != "input_strips":
             scene.input_strips = "input_strips"
 
-    # Audio Type Handling
     elif scene_type == "audio":
-        if audio_model == "tintwotin/Foundation-1-Diffusers":
-            scene.movie_num_inference_steps = 200
-#        elif addon_prefs.audio_model_card == "MMAudio" and scene.input_strips != "input_strips":
-#            scene.input_strips = "input_strips"
+        try:
+            from ..models import get_plugin as _gp
+            _p = _gp(audio_model)
+            if _p:
+                scene.movie_num_inference_steps = _p.PARAMS.steps
+        except Exception:
+            pass
 
     # Common Handling for Selected Strip
     if scene_type in {"movie", "audio"} or image_model == "xinsir/controlnet-scribble-sdxl-1.0":
@@ -1113,44 +1112,30 @@ def output_strips_updated(self, context):
             "kontext-community/relighting-kontext-dev-lora-v3",
         ]:
             scene.input_strips = "input_strips"
-        elif image_model == "lzyvegetable/FLUX.1-schnell":
-            movie_inference = 4
-            movie_guidance = 0
-        elif image_model == "ChuckMcSneed/FLUX.1-dev":
-            movie_inference = 25
-            movie_guidance = 4
-        elif image_model == "Tongyi-MAI/Z-Image-Turbo":
-            scene.movie_num_inference_steps = 8
-            scene.movie_num_guidance = 0
-        elif image_model == "Tongyi-MAI/Z-Image":
-            scene.movie_num_inference_steps = 28
-            scene.movie_num_guidance = 4
+        else:
+            try:
+                from ..models import get_plugin as _gp
+                _p = _gp(image_model)
+                if _p:
+                    scene.movie_num_inference_steps = _p.PARAMS.steps
+                    scene.movie_num_guidance = _p.PARAMS.guidance
+            except Exception:
+                pass
 
     # === MOVIE TYPE === #
     elif type == "movie":
-        if movie_model == "hunyuanvideo-community/HunyuanVideo":
-            movie_res_x = 960
-            movie_res_y = 544
-            movie_frames = 49
-            movie_inference = 20
-            movie_guidance = 4
-        elif movie_model == "Skywork/SkyReels-V1-Hunyuan-T2V":
-            movie_res_x = 960
-            movie_res_y = 544
-            movie_frames = 49
-            movie_inference = 40
-            movie_guidance = 1
-        elif movie_model in ["THUDM/CogVideoX-5b", "THUDM/CogVideoX-2b"]:
-            movie_res_x = 720
-            movie_res_y = 480
-            movie_frames = 49
-            movie_inference = 50
-            movie_guidance = 6
-        elif movie_model in {"LTX-2 Multi-Input File","rootonchair/LTX-2-19b-distilled","Lighttricks/LTX-2"}:
-            scene.generate_movie_x = 768
-            scene.generate_movie_y = 576
-            scene.generate_movie_frames = 121
-        elif movie_model in [
+        try:
+            from ..models import get_plugin as _gp
+            _p = _gp(movie_model)
+            if _p:
+                movie_res_x = _p.PARAMS.width
+                movie_res_y = _p.PARAMS.height
+                movie_frames = _p.PARAMS.frames
+                movie_inference = _p.PARAMS.steps
+                movie_guidance = _p.PARAMS.guidance
+        except Exception:
+            pass
+        if movie_model in [
             "Hailuo/MiniMax/img2vid",
             "Hailuo/MiniMax/subject2vid"
         ]:
@@ -1158,10 +1143,13 @@ def output_strips_updated(self, context):
 
     # === AUDIO TYPE === #
     elif type == "audio":
-        if audio_model == "tintwotin/Foundation-1-Diffusers":
-            movie_inference = 200
-#        if addon_prefs.audio_model_card == "MMAudio":
-#            scene.input_strips = "input_strips"
+        try:
+            from ..models import get_plugin as _gp
+            _p = _gp(audio_model)
+            if _p:
+                scene.movie_num_inference_steps = _p.PARAMS.steps
+        except Exception:
+            pass
 
     # === COMMON SETTINGS === #
     if type in ["movie", "audio"] or image_model == "xinsir/controlnet-scribble-sdxl-1.0":

@@ -17,7 +17,11 @@ class SDXLOpenPosePlugin(ModelPlugin):
         UISection.POSE_TOGGLE, UISection.ENHANCE,
     ]
     PARAMS       = ParamSpec(steps=30)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "controlnet_aux"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers", "controlnet_aux"]
+    supports_inpaint           = False
+    supports_img2img           = False
+    requires_input_strip       = True
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch

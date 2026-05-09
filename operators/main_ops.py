@@ -143,7 +143,8 @@ class SEQUENCER_OT_generate_movie(Operator):
             print("Video model cache empty. Forcing load.")
             should_load = True
         if cache["last_model_card"] != movie_model_card:
-            print("Video model changed. Forcing load.")
+            print("Video model changed. Releasing old model.")
+            release_model_cache(cache)
             should_load = True
 
         # Detect mode
@@ -301,9 +302,7 @@ class SEQUENCER_OT_generate_movie(Operator):
 
         if should_unload:
             print("Unloading video models from memory...")
-            cache["pipe"] = None
-            cache["refiner"] = None
-            clear_cuda_cache()
+            release_model_cache(cache)
 
         bpy.types.Scene.movie_path = ""
         scene.frame_current = current_frame
@@ -454,6 +453,10 @@ class SEQUENCER_OT_generate_audio(Operator):
                 temperature    = getattr(scene, "chat_temperature",   0.8),
                 remove_silence = getattr(scene, "remove_silence",     False),
                 is_voice_clone = is_vc,
+                bpm            = getattr(scene, "music_bpm",          0),
+                lyrics         = getattr(scene, "music_lyrics",       ""),
+                key_scale      = getattr(scene, "music_key_scale",    ""),
+                time_signature = getattr(scene, "music_time_signature", ""),
             )
 
             try:
@@ -484,8 +487,7 @@ class SEQUENCER_OT_generate_audio(Operator):
         # --- unload ---
         if should_unload:
             print("Unloading audio model...")
-            cache["pipe"] = cache["model"] = cache["vocoder"] = cache["feature_extractor"] = None
-            clear_cuda_cache()
+            release_model_cache(cache)
 
         return {"FINISHED"}
 
@@ -557,45 +559,15 @@ class SEQUENCER_OT_generate_image(Operator):
         lora_files = scene.lora_files
         enabled_items = [item for item in lora_files if item.enabled]
 
-        # Models that don't support inpaint or img2img conversion
-        _no_inpaint = {
-            "diffusers/controlnet-canny-sdxl-1.0-small",
-            "xinsir/controlnet-openpose-sdxl-1.0",
-            "xinsir/controlnet-scribble-sdxl-1.0",
-            "adamo1139/stable-diffusion-3.5-large-ungated",
-            "adamo1139/stable-diffusion-3.5-medium-ungated",
-            "ZhengPeng7/BiRefNet_HR",
-            "Shitao/OmniGen-v1-diffusers",
-            "Qwen/Qwen-Image-Edit-2511",
-            "diffusers/FLUX.2-dev-bnb-4bit",
-            "Runware/BFL-FLUX.2-klein-base-4B",
-            "black-forest-labs/FLUX.2-klein-9b-kv",
-        }
-        _no_convert = {
-            "diffusers/controlnet-canny-sdxl-1.0-small",
-            "xinsir/controlnet-openpose-sdxl-1.0",
-            "xinsir/controlnet-scribble-sdxl-1.0",
-            "ZhengPeng7/BiRefNet_HR",
-            "Shitao/OmniGen-v1-diffusers",
-            "Qwen/Qwen-Image-Edit-2511",
-            "diffusers/FLUX.2-dev-bnb-4bit",
-        }
-        _needs_strip = {
-            "diffusers/controlnet-canny-sdxl-1.0-small",
-            "xinsir/controlnet-openpose-sdxl-1.0",
-            "xinsir/controlnet-scribble-sdxl-1.0",
-            "Qwen/Qwen-Image-Edit-2511",
-        }
-
         do_inpaint = (
             input_mode == "input_strips"
             and bool(find_strip_by_name(scene, scene.inpaint_selected_strip))
             and type_select == "image"
-            and image_model_card not in _no_inpaint
+            and plugin.supports_inpaint
         )
         do_convert = (
             bool(scene.image_path or scene.movie_path)
-            and image_model_card not in _no_convert
+            and plugin.supports_img2img
             and not do_inpaint
         )
         do_refine = getattr(scene, "refine_sd", False) and not do_convert
@@ -606,7 +578,7 @@ class SEQUENCER_OT_generate_image(Operator):
         print("do_refine:  " + str(do_refine))
 
         # Validate strip selection when input strip is required
-        if do_inpaint or do_convert or image_model_card in _needs_strip:
+        if do_inpaint or do_convert or plugin.requires_input_strip:
             if not strips:
                 self.report({"INFO"}, "Select strip(s) for processing.")
                 return {"CANCELLED"}
@@ -628,7 +600,8 @@ class SEQUENCER_OT_generate_image(Operator):
 
         if (_pallaidium_model_cache["last_model_card"] != image_model_card and
                 _pallaidium_model_cache["last_model_card"] is not None):
-            print("Model card changed. Forcing load.")
+            print("Model card changed. Releasing old model.")
+            release_model_cache(_pallaidium_model_cache)
             should_load = True
 
         if should_load:
@@ -852,11 +825,7 @@ class SEQUENCER_OT_generate_image(Operator):
         # Unload
         if should_unload:
             print("Unloading image model from memory...")
-            _pallaidium_model_cache["pipe"] = None
-            _pallaidium_model_cache["converter"] = None
-            _pallaidium_model_cache["refiner"] = None
-            _pallaidium_model_cache["preprocessor"] = None
-            clear_cuda_cache()
+            release_model_cache(_pallaidium_model_cache)
 
         scene.movie_num_guidance = guidance
         scene.frame_current = current_frame

@@ -16,8 +16,21 @@ class FramePackPlugin(ModelPlugin):
         UISection.PROMPT, UISection.VIDEO_STRIP,
         UISection.RESOLUTION, UISection.FRAMES, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
     ]
-    PARAMS       = ParamSpec(width=848, height=480, frames=61, steps=25, guidance=1.0)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "transformers"]
+    PARAMS                    = ParamSpec(width=848, height=480, frames=61, steps=25, guidance=1.0)
+    REQUIRED_PACKAGES         = ["torch", "diffusers", "transformers"]
+    uses_standard_input_strip = False
+
+    def draw_custom_ui(self, col, context) -> bool:
+        scene = context.scene
+        if getattr(scene, "input_strips", "") != "input_strips" or scene.sequence_editor is None:
+            return False
+        row = col.row(align=True)
+        row.prop_search(
+            scene, "out_frame", scene.sequence_editor, "strips",
+            text="End Frame", icon="RENDER_RESULT",
+        )
+        row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "out_frame_select"
+        return False
 
     def load(self, prefs, scene, **kw):
         import torch

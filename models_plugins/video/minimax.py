@@ -9,11 +9,12 @@ from ...utils.helpers import (
 
 
 class _MiniMaxBase(ModelPlugin):
-    MODEL_TYPE   = "video"
-    INPUTS       = InputSpec.PROMPT | InputSpec.API_KEY
-    UI_SECTIONS  = [UISection.PROMPT, UISection.SEED]
-    PARAMS       = ParamSpec(steps=1, guidance=1.0)
-    REQUIRED_PACKAGES = []
+    MODEL_TYPE              = "video"
+    INPUTS                  = InputSpec.PROMPT | InputSpec.API_KEY
+    UI_SECTIONS             = [UISection.PROMPT, UISection.SEED]
+    PARAMS                  = ParamSpec(steps=1, guidance=1.0)
+    REQUIRED_PACKAGES       = []
+    uses_standard_input_strip = False
 
     def load(self, prefs, scene, **kw):
         return {"pipe": None, "refiner": None, "last_model_card": self.MODEL_ID}
@@ -83,6 +84,18 @@ class MiniMaxSubject2VidPlugin(_MiniMaxBase):
     DISPLAY_NAME = "Video: MiniMax subject2vid (cloud)"
     DESCRIPTION  = "Cloud subject-to-video via MiniMax Hailuo API"
     INPUTS       = InputSpec.PROMPT | InputSpec.IMAGE | InputSpec.API_KEY
+
+    def draw_custom_ui(self, col, context) -> bool:
+        scene = context.scene
+        if scene.sequence_editor is None:
+            return False
+        row = col.row(align=True)
+        row.prop_search(
+            scene, "minimax_subject", scene.sequence_editor, "strips",
+            text="Subject", icon="USER",
+        )
+        row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "minimax_select"
+        return False
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs):
         import bpy, os

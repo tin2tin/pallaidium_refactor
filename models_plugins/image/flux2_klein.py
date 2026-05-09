@@ -14,6 +14,7 @@ class _Flux2KleinBase(ModelPlugin):
     ]
     PARAMS      = ParamSpec(steps=4, guidance=1.0)
     REQUIRED_PACKAGES = ["torch", "diffusers", "transformers"]
+    supports_inpaint  = False
 
     _BASE_PIPELINE = "black-forest-labs/FLUX.2-klein-9b-kv"
     _TRANSFORMER   = "OzzyGT/flux2_klein_9B_bnb_4bit_transformer"

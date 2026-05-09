@@ -16,7 +16,10 @@ class OmniGenPlugin(ModelPlugin):
         UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
     ]
     PARAMS       = ParamSpec(steps=50, guidance=3.0, max_multi_images=3)
-    REQUIRED_PACKAGES = ["torch", "diffusers"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers"]
+    supports_inpaint           = False
+    supports_img2img           = False
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch
@@ -32,6 +35,20 @@ class OmniGenPlugin(ModelPlugin):
         else:
             pipe.enable_model_cpu_offload()
         return {"pipe": pipe, "converter": None, "refiner": None, "preprocessor": None}
+
+    def draw_custom_ui(self, col, context) -> bool:
+        scene = context.scene
+        if scene.sequence_editor is None:
+            return True
+        for idx in range(1, 4):
+            col.prop(scene, f"omnigen_prompt_{idx}", text="", icon="ADD")
+            row = col.row(align=True)
+            row.prop_search(
+                scene, f"omnigen_strip_{idx}", scene.sequence_editor, "strips",
+                text="", icon="FILE_IMAGE",
+            )
+            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = f"omni_select{idx}"
+        return True
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs):
         import torch

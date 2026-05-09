@@ -22,7 +22,11 @@ class SDXLScribblePlugin(ModelPlugin):
         UISection.SCRIBBLE_TOGGLE, UISection.ENHANCE,
     ]
     PARAMS       = ParamSpec(steps=30, guidance=9.0)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "controlnet_aux", "cv2"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers", "controlnet_aux", "cv2"]
+    supports_inpaint           = False
+    supports_img2img           = False
+    requires_input_strip       = True
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch

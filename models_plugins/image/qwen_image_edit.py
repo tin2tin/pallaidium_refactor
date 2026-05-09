@@ -16,7 +16,11 @@ class QwenImageEditPlugin(ModelPlugin):
         UISection.STEPS, UISection.SEED,
     ]
     PARAMS       = ParamSpec(steps=4, max_multi_images=3)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "transformers"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers", "transformers"]
+    supports_inpaint           = False
+    supports_img2img           = False
+    requires_input_strip       = True
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch
@@ -56,6 +60,27 @@ class QwenImageEditPlugin(ModelPlugin):
         else:
             pipe.enable_model_cpu_offload()
         return {"pipe": pipe, "converter": None, "refiner": None, "preprocessor": None}
+
+    def draw_custom_ui(self, col, context) -> bool:
+        scene = context.scene
+        try:
+            col.prop(scene, "input_strips", text="Input")
+        except Exception:
+            pass
+        if scene.sequence_editor is None:
+            return True
+        for attr, action in [
+            ("qwen_strip_1", "qwen_select1"),
+            ("qwen_strip_2", "qwen_select2"),
+            ("qwen_strip_3", "qwen_select3"),
+        ]:
+            row = col.row(align=True)
+            row.prop_search(
+                scene, attr, scene.sequence_editor, "strips",
+                text="", icon="FILE_IMAGE",
+            )
+            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = action
+        return True
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs):
         import torch

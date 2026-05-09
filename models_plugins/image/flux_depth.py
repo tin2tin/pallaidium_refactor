@@ -16,7 +16,8 @@ class FluxDepthPlugin(ModelPlugin):
         UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
     ]
     PARAMS       = ParamSpec(steps=28, guidance=3.5)
-    REQUIRED_PACKAGES = ["torch", "diffusers", "image_gen_aux"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers", "image_gen_aux"]
+    uses_standard_input_strip  = False
 
     def load(self, prefs, scene, **kw):
         import torch

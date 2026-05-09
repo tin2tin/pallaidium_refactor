@@ -87,160 +87,20 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
         if scene.sequence_editor is None:
             scene.sequence_editor_create()
 
-        # OmniGen
-        if image_model_card == "Shitao/OmniGen-v1-diffusers" and type == "image":
-            col.prop(context.scene, "omnigen_prompt_1", text="", icon="ADD")
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "omnigen_strip_1",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "omni_select1"
-
-            col.prop(context.scene, "omnigen_prompt_2", text="", icon="ADD")
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "omnigen_strip_2",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "omni_select2"
-
-            col.prop(context.scene, "omnigen_prompt_3", text="", icon="ADD")
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "omnigen_strip_3",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "omni_select3"
-        else:
+        drew_custom = (plugin.draw_custom_ui(col, context) is True) if (plugin and type == "image") else False
+        if not drew_custom:
             try:
                 col.prop(context.scene, "input_strips", text="Input")
             except:
                 pass
 
-        # Qwen multi-image
-        if image_model_card == "Qwen/Qwen-Image-Edit-2511" and type == "image":
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "qwen_strip_1",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "qwen_select1"
-
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "qwen_strip_2",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "qwen_select2"
-
-            row = col.row(align=True)
-            row.prop_search(
-                scene,
-                "qwen_strip_3",
-                scene.sequence_editor,
-                "strips",
-                text="",
-                icon="FILE_IMAGE",
-            )
-            row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "qwen_select3"
-
-        # Flux multi-image
-        if image_model_card == "diffusers/FLUX.2-dev-bnb-4bit" and type == "image": # Keep "Qwen/Qwen-Image-Edit-2511" if it's the model card being checked
-            # Loop through the currently visible strips
-            for i in range(1, scene.flux_visible_strips + 1):
-                row = col.row(align=True)
-                row.prop_search(
-                    scene,
-                    f"flux_strip_{i}",
-                    scene.sequence_editor,
-                    "strips",
-                    text="",
-                    icon="FILE_IMAGE",
-                )
-
-
-                op = row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER")
-                op.action = f"flux_select{i}"
-
-                # If this is the last visible strip and not all 9 are displayed, add the '+' button
-                if i == scene.flux_visible_strips and scene.flux_visible_strips < 9:
-                    # Only show the Hide/Clear button if there's more than one visible strip
-                    if scene.flux_visible_strips > 1:
-                        clear_op = row.operator("object.flux_hide_strip", text="", icon="REMOVE")
-                        clear_op.strip_index = i # Pass the index of the strip to clear/hide
-                    row.operator("object.flux_add_strip", text="", icon="ADD")
-
-        if image_model_card == "kontext-community/relighting-kontext-dev-lora-v3" and type == "image":
-            box = layout.box()
-            box = box.column(align=True)
-            box.use_property_split = True
-            box.use_property_decorate = False
-            box.prop(context.scene, "illumination_style", text="Relight Style")
-            box.prop(context.scene, "light_direction", text="Direction")
-
 
         if type != "text":
             if type != "audio":
-                if type == "movie" and "Hailuo/MiniMax/" in movie_model_card:
-                    if movie_model_card == "Hailuo/MiniMax/subject2vid":
-                        row = col.row(align=True)
-                        row.prop_search(
-                            scene,
-                            "minimax_subject",
-                            scene.sequence_editor,
-                            "strips",
-                            text="Subject",
-                            icon="USER",
-                        )
-                        row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "minimax_select"
+                if type == "movie" and plugin is not None and not plugin.uses_standard_input_strip:
+                    plugin.draw_custom_ui(col, context)
 
-                elif type == "movie" and movie_model_card == "lllyasviel/FramePackI2V_HY":
-                    if input == "input_strips":
-                        row = col.row(align=True)
-                        row.prop_search(
-                            scene,
-                            "out_frame",
-                            scene.sequence_editor,
-                            "strips",
-                            text="End Frame",
-                            icon="RENDER_RESULT",
-                        )
-                        row.operator("sequencer.strip_picker", text="", icon="EYEDROPPER").action = "out_frame_select"
-
-                elif (type == "movie") or (
-                    type == "image"
-                    and image_model_card != "xinsir/controlnet-openpose-sdxl-1.0"
-                    and image_model_card != "xinsir/controlnet-scribble-sdxl-1.0"
-                    and image_model_card != "ZhengPeng7/BiRefNet_HR"
-                    and image_model_card != "Shitao/OmniGen-v1-diffusers"
-                    and image_model_card != "Qwen/Qwen-Image-Edit-2511"
-                    and image_model_card != "Runware/FLUX.1-Redux-dev"
-                    and image_model_card != "fuliucansheng/FLUX.1-Canny-dev-diffusers-lora"
-                    and image_model_card != "romanfratric234/FLUX.1-Depth-dev-lora"
-                    #and image_model_card != "yuvraj108c/FLUX.1-Kontext-dev"
-                    and image_model_card != "kontext-community/relighting-kontext-dev-lora-v3"
-                ):
+                elif (type == "movie") or (type == "image" and (plugin is None or plugin.uses_standard_input_strip)):
                     if input == "input_strips" and (not scene.inpaint_selected_strip or image_model_card == "yuvraj108c/FLUX.1-Kontext-dev"):
                         col = col.column(heading="Use", align=True)
                         col.prop(addon_prefs, "use_strip_data", text=" Name & Seed")
@@ -254,10 +114,7 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
 
                     if (
                         bpy.context.scene.sequence_editor is not None
-                        and image_model_card
-                        != "diffusers/controlnet-canny-sdxl-1.0-small"
-                        and image_model_card != "Runware/BFL-FLUX.2-klein-base-4B"
-                        and image_model_card != "black-forest-labs/FLUX.2-klein-9b-kv"
+                        and (plugin is None or plugin.supports_inpaint)
                     ):
                         if input == "input_strips" and type == "image":
                             row = col.row(align=True)
@@ -365,6 +222,15 @@ class SEQUENCER_PT_pallaidium_panel(Panel):  # UI
                         context.scene, "img_guidance_scale", text="Image Power"
                     )
                 col.prop(context.scene, "movie_num_guidance", text="Word Power")
+
+            if _has(UISection.ILLUMINATION):
+                col.prop(context.scene, "illumination_style", text="Relight Style")
+                col.prop(context.scene, "light_direction", text="Direction")
+            if type == "audio" and _has(UISection.MUSIC_PARAMS):
+                col.prop(context.scene, "music_bpm", text="BPM")
+                col.prop(context.scene, "music_key_scale", text="Key")
+                col.prop(context.scene, "music_time_signature", text="Time Sig.")
+                col.prop(context.scene, "music_lyrics", text="Lyrics")
 
             if _has(UISection.SEED):
                 col = col.column(align=True)

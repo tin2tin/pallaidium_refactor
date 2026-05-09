@@ -13,10 +13,12 @@ class KontextRelightPlugin(ModelPlugin):
     INPUTS       = InputSpec.PROMPT | InputSpec.IMAGE
     UI_SECTIONS  = [
         UISection.PROMPT, UISection.IMAGE_STRIP,
-        UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE, UISection.SEED,
+        UISection.RESOLUTION, UISection.STEPS, UISection.GUIDANCE,
+        UISection.ILLUMINATION, UISection.SEED,
     ]
     PARAMS       = ParamSpec(steps=28, guidance=3.5)
-    REQUIRED_PACKAGES = ["torch", "diffusers"]
+    REQUIRED_PACKAGES          = ["torch", "diffusers"]
+    uses_standard_input_strip  = False
 
     _BASE_MODEL = "yuvraj108c/FLUX.1-Kontext-dev"
 
