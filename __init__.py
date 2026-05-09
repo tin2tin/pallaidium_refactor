@@ -24,7 +24,7 @@ bl_info = {
     "name": "Pallaidium - Generative AI",
     "author": "tintwotin",
     "version": (2, 1),
-    "blender": (4, 5, 0),
+    "blender": (5, 0, 0),
     "location": "Video Sequence Editor > Sidebar > Generative AI",
     "description": "AI Generate media in the VSE",
     "category": "Sequencer",
