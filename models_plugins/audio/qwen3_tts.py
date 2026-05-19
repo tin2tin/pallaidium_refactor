@@ -4,6 +4,50 @@ from ...models.base import ModelPlugin, InputSpec, UISection, ParamSpec, ModelIn
 from ...utils.helpers import solve_path, clean_filename
 
 
+def _patch_check_model_inputs():
+    """Make check_model_inputs work as @decorator() factory.
+
+    Newer transformers defines check_model_inputs(func) directly (no factory),
+    but qwen_tts calls it as @check_model_inputs() with no arguments.  Patch
+    whichever module owns the function so both call styles work.
+    """
+    import sys, importlib, functools
+
+    # Drop cached qwen_tts / faster_qwen3_tts so they re-import with the fix.
+    for key in list(sys.modules.keys()):
+        if "qwen_tts" in key or "faster_qwen3_tts" in key:
+            del sys.modules[key]
+
+    candidates = (
+        "transformers.utils.generic",   # confirmed source in qwen_tts
+        "transformers.utils.doc",
+        "transformers.utils",
+        "transformers",
+    )
+    for mod_name in candidates:
+        try:
+            mod = importlib.import_module(mod_name)
+        except ImportError:
+            continue
+        fn = getattr(mod, "check_model_inputs", None)
+        if fn is None or getattr(fn, "_pallaidium_patched", False):
+            continue
+        _orig = fn
+        def _compat(func=None, _o=_orig):
+            # @check_model_inputs()  → func is None → return identity decorator
+            # @check_model_inputs    → func is the decorated fn → forward to orig
+            if func is None:
+                return lambda f: f
+            return _o(func)
+        _compat._pallaidium_patched = True
+        try:
+            functools.update_wrapper(_compat, _orig)
+        except Exception:
+            pass
+        setattr(mod, "check_model_inputs", _compat)
+        return
+
+
 class Qwen3TTSPlugin(ModelPlugin):
     MODEL_ID     = "Qwen/Qwen3-TTS-12Hz-1.7B-Base"
     DISPLAY_NAME = "TTS: Qwen3 (voice clone)"
@@ -23,6 +67,7 @@ class Qwen3TTSPlugin(ModelPlugin):
 
     def load(self, prefs, scene, **kw):
         import torch
+        _patch_check_model_inputs()
         from faster_qwen3_tts import FasterQwen3TTS
 
         device = (

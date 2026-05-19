@@ -62,6 +62,11 @@ class LTX2_3MultiPlugin(ModelPlugin):
         return {"pipe": None, "refiner": None, "last_model_card": self.MODEL_ID}
 
     def generate(self, pipe_obj, inputs: ModelInputs, scene, prefs) -> str:
+        # SDNQ's compiled dequantization kernel requires cluster_dims in KernelMetadata,
+        # which is absent from Blender's bundled Triton. torch._dynamo.config must be
+        # set at runtime (env vars are read at import time, so they arrive too late).
+        torch._dynamo.config.disable = True
+
         from diffusers import LTX2VideoTransformer3DModel
         from diffusers.pipelines.ltx2.export_utils import encode_video
         from diffusers.pipelines.ltx2.latent_upsampler import LTX2LatentUpsamplerModel
@@ -244,6 +249,40 @@ class LTX2_3MultiPlugin(ModelPlugin):
             pipe.scheduler.config, use_dynamic_shifting=False, shift_terminal=None,
         )
 
+        # Apply user LoRAs to Stage 1 — must be before enable_group_offload.
+        # generate() has no **kw so read directly from the scene.
+        from ...utils.helpers import bpy as _bpy
+        _lora_folder   = _bpy.path.abspath(getattr(scene, "lora_folder", ""))
+        _enabled_loras = [item for item in getattr(scene, "lora_files", []) if item.enabled]
+        _lora_names, _lora_weights = [], []
+        if _enabled_loras and _lora_folder:
+            print(f"LTX-2.3 Stage 1: loading {len(_enabled_loras)} LoRA(s) from {_lora_folder}")
+            for _item in _enabled_loras:
+                _name = clean_filename(_item.name).replace(".", "")
+                try:
+                    pipe.load_lora_weights(
+                        _lora_folder,
+                        weight_name=_item.name + ".safetensors",
+                        adapter_name=_name,
+                    )
+                except Exception as _e:
+                    print(f"  LoRA '{_item.name}': load error — {_e}")
+                    continue
+                # load_lora_weights succeeds silently even when no keys match;
+                # check that the adapter was actually registered before using it.
+                _loaded = {a for _v in pipe.get_list_adapters().values() for a in _v}
+                if _name in _loaded:
+                    _lora_names.append(_name)
+                    _lora_weights.append(_item.weight_value)
+                    print(f"  LoRA '{_item.name}': loaded (weight={_item.weight_value})")
+                else:
+                    print(f"  LoRA '{_item.name}': no matching keys for LTX-2.3, skipped.")
+            if _lora_names:
+                pipe.set_adapters(_lora_names, adapter_weights=_lora_weights)
+                print(f"  Active LoRAs: {_lora_names}")
+            else:
+                print("  No compatible LoRAs applied.")
+
         # Parse Audio Conditions
         audio_conditions = None
         if sound_path and hasattr(pipe, "audio_vae") and pipe.audio_vae:
@@ -328,6 +367,34 @@ class LTX2_3MultiPlugin(ModelPlugin):
         refine_pipe.scheduler = FlowMatchEulerDiscreteScheduler.from_config(
             refine_pipe.scheduler.config, use_dynamic_shifting=False, shift_terminal=None,
         )
+
+        # Apply same user LoRAs to Stage 2 transformer before group offload
+        if _enabled_loras and _lora_folder:
+            print(f"LTX-2.3 Stage 2: loading {len(_enabled_loras)} LoRA(s)")
+            _r_names, _r_weights = [], []
+            for _item in _enabled_loras:
+                _name = clean_filename(_item.name).replace(".", "")
+                try:
+                    refine_pipe.load_lora_weights(
+                        _lora_folder,
+                        weight_name=_item.name + ".safetensors",
+                        adapter_name=_name,
+                    )
+                except Exception as _e:
+                    print(f"  LoRA '{_item.name}': load error — {_e}")
+                    continue
+                _loaded = {a for _v in refine_pipe.get_list_adapters().values() for a in _v}
+                if _name in _loaded:
+                    _r_names.append(_name)
+                    _r_weights.append(_item.weight_value)
+                    print(f"  LoRA '{_item.name}': loaded (weight={_item.weight_value})")
+                else:
+                    print(f"  LoRA '{_item.name}': no matching keys for LTX-2.3, skipped.")
+            if _r_names:
+                refine_pipe.set_adapters(_r_names, adapter_weights=_r_weights)
+                print(f"  Active LoRAs: {_r_names}")
+            else:
+                print("  No compatible LoRAs applied.")
 
         refine_pipe.enable_group_offload(
             onload_device=onload_device, 

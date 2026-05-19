@@ -130,6 +130,24 @@ class LTX2MultiPlugin(ModelPlugin):
             torch_dtype=torch_dtype,
             trust_remote_code=True,
         )
+
+        # Apply user LoRAs
+        enabled_items = kw.get("enabled_items", [])
+        if enabled_items:
+            from ...utils.helpers import clean_filename, bpy
+            lora_folder = getattr(bpy.context.scene, "lora_folder", "")
+            names, weights = [], []
+            for item in enabled_items:
+                name = clean_filename(item.name).replace(".", "")
+                names.append(name)
+                weights.append(item.weight_value)
+                pipe.load_lora_weights(
+                    bpy.path.abspath(lora_folder),
+                    weight_name=item.name + ".safetensors",
+                    adapter_name=name,
+                )
+            pipe.set_adapters(names, adapter_weights=weights)
+
         pipe.enable_group_offload(
             onload_device=onload_device, offload_device=offload_device,
             offload_type="leaf_level", low_cpu_mem_usage=True,
